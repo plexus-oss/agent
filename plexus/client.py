@@ -52,7 +52,7 @@ class Plexus:
     Args:
         api_key: Your Plexus API key. If not provided, reads from
                  PLEXUS_API_KEY env var or ~/.plexus/config.json
-        endpoint: API endpoint URL. Defaults to https://app.plexus.dev
+        endpoint: API endpoint URL. Defaults to https://app.plexusaero.space
         device_id: Unique identifier for this device. Auto-generated if not provided.
         timeout: Request timeout in seconds. Default 10s.
     """
@@ -83,7 +83,7 @@ class Plexus:
             if self.api_key:
                 self._session.headers["x-api-key"] = self.api_key
             self._session.headers["Content-Type"] = "application/json"
-            self._session.headers["User-Agent"] = "plexus-agent/0.1.0"
+            self._session.headers["User-Agent"] = "agent/0.1.0"
         return self._session
 
     def _make_point(

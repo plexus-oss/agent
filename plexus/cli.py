@@ -45,12 +45,12 @@ def main():
 
 @main.command()
 @click.option("--api-key", prompt="API Key", hide_input=True, help="Your Plexus API key")
-@click.option("--endpoint", default=None, help="API endpoint (default: https://app.plexus.dev)")
+@click.option("--endpoint", default=None, help="API endpoint (default: https://app.plexusaero.space)")
 def init(api_key: str, endpoint: Optional[str]):
     """
     Initialize Plexus with your API key.
 
-    Get your API key from https://app.plexus.dev/settings
+    Get your API key from https://app.plexusaero.space/settings
     """
     config = load_config()
     config["api_key"] = api_key.strip()

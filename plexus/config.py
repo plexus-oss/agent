@@ -14,7 +14,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 
 DEFAULT_CONFIG = {
     "api_key": None,
-    "endpoint": "https://app.plexus.dev",
+    "endpoint": "https://app.plexusaero.space",
     "device_id": None,
 }
 

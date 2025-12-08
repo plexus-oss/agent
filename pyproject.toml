@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "plexus-agent"
+name = "agent"
 version = "0.1.0"
 description = "Send sensor data to Plexus in one line of code"
 readme = "README.md"
@@ -42,8 +42,8 @@ plexus = "plexus.cli:main"
 [project.urls]
 Homepage = "https://plexus.dev"
 Documentation = "https://docs.plexus.dev"
-Repository = "https://github.com/plexus-oss/plexus-agent"
-Issues = "https://github.com/plexus-oss/plexus-agent/issues"
+Repository = "https://github.com/plexus-oss/agent"
+Issues = "https://github.com/plexus-oss/agent/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["plexus"]

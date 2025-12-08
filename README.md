@@ -3,7 +3,7 @@
 > Send sensor data to Plexus in one line of code.
 
 ```bash
-pip install plexus-agent
+pip install agent
 plexus init
 plexus send temperature 72.5
 ```
@@ -13,14 +13,14 @@ Data flowing in 60 seconds.
 ## Installation
 
 ```bash
-pip install plexus-agent
+pip install agent
 ```
 
 ## Quick Start
 
 ### 1. Get your API key
 
-Sign up at [app.plexus.dev](https://app.plexus.dev) and create an API key in Settings.
+Sign up at [app.plexusaero.space](https://app.plexusaero.space) and create an API key in Settings.
 
 ### 2. Initialize
 
@@ -129,7 +129,7 @@ plexus status
 # Plexus Agent Status
 # ========================================
 # Config file:  /Users/you/.plexus/config.json
-# Endpoint:     https://app.plexus.dev
+# Endpoint:     https://app.plexusaero.space
 # Device ID:    device-a1b2c3d4
 # API Key:      pk_live_...xxxx
 #
@@ -144,7 +144,7 @@ Config is stored in `~/.plexus/config.json`:
 ```json
 {
   "api_key": "pk_live_xxxxxxxxxxxx",
-  "endpoint": "https://app.plexus.dev",
+  "endpoint": "https://app.plexusaero.space",
   "device_id": "device-a1b2c3d4"
 }
 ```
