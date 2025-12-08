@@ -9,7 +9,6 @@ import json
 import os
 import platform
 import subprocess
-import sys
 from typing import Optional, Callable
 
 import websockets

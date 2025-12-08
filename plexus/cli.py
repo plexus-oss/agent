@@ -223,7 +223,6 @@ def status():
     """
     Check connection status and configuration.
     """
-    config = load_config()
     api_key = get_api_key()
 
     click.echo("\nPlexus Agent Status")
