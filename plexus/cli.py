@@ -73,13 +73,24 @@ def init(api_key: str, endpoint: Optional[str]):
     try:
         px = Plexus(api_key=api_key)
         px.send("plexus.agent.init", 1, tags={"event": "init"})
-        click.secho("Connected successfully!", fg="green")
+        click.secho("✓ Connected successfully!\n", fg="green")
+        click.echo("You're all set! Try these commands:")
+        click.echo("  plexus send temperature 72.5       # Send a single value")
+        click.echo("  plexus send motor.rpm 3450 -t id=1 # Send with tags")
+        click.echo("  plexus stream sensor_name          # Stream from stdin")
+        click.echo("  plexus status                      # Check connection")
+        click.echo(f"\nEndpoint: {px.endpoint}")
     except AuthenticationError as e:
-        click.secho(f"Authentication failed: {e}", fg="red")
+        click.secho(f"✗ Authentication failed: {e}", fg="red")
+        click.echo("\nCheck that your API key is valid at:")
+        click.echo(f"  {config.get('endpoint', 'https://app.plexusaero.space')}/settings?tab=connections")
         sys.exit(1)
     except PlexusError as e:
-        click.secho(f"Connection failed: {e}", fg="yellow")
-        click.echo("Your config is saved. Check your network connection.")
+        click.secho(f"✗ Connection failed: {e}", fg="yellow")
+        click.echo("\nYour config is saved. Troubleshooting:")
+        click.echo("  • Check your network connection")
+        click.echo("  • Verify the endpoint is correct")
+        click.echo(f"  • Current endpoint: {config.get('endpoint', 'https://app.plexusaero.space')}")
 
 
 @main.command()
@@ -116,12 +127,15 @@ def send(metric: str, value: float, tag: tuple, timestamp: Optional[float]):
     try:
         px = Plexus()
         px.send(metric, value, timestamp=timestamp, tags=tags if tags else None)
-        click.echo(f"Sent {metric}={value}")
+        click.secho(f"✓ Sent {metric}={value}", fg="green")
+        if tags:
+            click.echo(f"  Tags: {tags}")
     except AuthenticationError as e:
-        click.secho(f"Authentication error: {e}", fg="red")
+        click.secho(f"✗ Authentication error: {e}", fg="red")
+        click.echo("  Run 'plexus init' to reconfigure your API key")
         sys.exit(1)
     except PlexusError as e:
-        click.secho(f"Error: {e}", fg="red")
+        click.secho(f"✗ Error: {e}", fg="red")
         sys.exit(1)
 
 
@@ -212,30 +226,32 @@ def status():
     config = load_config()
     api_key = get_api_key()
 
-    click.echo("Plexus Agent Status")
-    click.echo("=" * 40)
-    click.echo(f"Config file:  {get_config_path()}")
-    click.echo(f"Endpoint:     {get_endpoint()}")
-    click.echo(f"Device ID:    {get_device_id()}")
+    click.echo("\nPlexus Agent Status")
+    click.echo("─" * 40)
+    click.echo(f"  Config:    {get_config_path()}")
+    click.echo(f"  Endpoint:  {get_endpoint()}")
+    click.echo(f"  Device ID: {get_device_id()}")
 
     if api_key:
         # Show only prefix of API key
-        masked = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else "****"
-        click.echo(f"API Key:      {masked}")
+        masked = api_key[:12] + "..." if len(api_key) > 12 else "****"
+        click.echo(f"  API Key:   {masked}")
+        click.echo("─" * 40)
 
         # Test connection
-        click.echo("\nTesting connection...")
+        click.echo("  Testing connection...")
         try:
             px = Plexus()
             px.send("plexus.agent.status", 1, tags={"event": "status_check"})
-            click.secho("Connected!", fg="green")
+            click.secho("  Status:    ✓ Connected\n", fg="green")
         except AuthenticationError as e:
-            click.secho(f"Auth failed: {e}", fg="red")
+            click.secho(f"  Status:    ✗ Auth failed - {e}\n", fg="red")
         except PlexusError as e:
-            click.secho(f"Connection failed: {e}", fg="yellow")
+            click.secho(f"  Status:    ✗ Connection failed - {e}\n", fg="yellow")
     else:
-        click.secho("API Key:      Not configured", fg="yellow")
-        click.echo("\nRun 'plexus init' to set up your API key.")
+        click.secho("  API Key:   Not configured", fg="yellow")
+        click.echo("─" * 40)
+        click.echo("\n  Run 'plexus init' to set up your API key.\n")
 
 
 @main.command()
@@ -251,6 +267,45 @@ def config():
             # Mask API key
             value = value[:8] + "..." + value[-4:] if len(value) > 12 else "****"
         click.echo(f"  {key}: {value}")
+
+
+@main.command()
+def connect():
+    """
+    Connect to Plexus for remote terminal access.
+
+    This opens a persistent connection to the Plexus server, allowing
+    you to run commands on this machine from the web UI.
+
+    Example:
+
+        plexus connect
+    """
+    from plexus.connector import run_connector
+
+    api_key = get_api_key()
+    if not api_key:
+        click.secho("No API key configured. Run 'plexus init' first.", fg="red")
+        sys.exit(1)
+
+    endpoint = get_endpoint()
+    device_id = get_device_id()
+
+    click.echo("\nPlexus Remote Terminal")
+    click.echo("─" * 40)
+    click.echo(f"  Device ID: {device_id}")
+    click.echo(f"  Endpoint:  {endpoint}")
+    click.echo("─" * 40)
+
+    def status_callback(msg: str):
+        click.echo(f"  {msg}")
+
+    click.echo("\n  Press Ctrl+C to disconnect\n")
+
+    try:
+        run_connector(api_key=api_key, endpoint=endpoint, on_status=status_callback)
+    except KeyboardInterrupt:
+        click.echo("\n  Disconnected.")
 
 
 # Null context manager for Python 3.8 compatibility
