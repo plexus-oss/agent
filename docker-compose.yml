@@ -1,0 +1,78 @@
+# Plexus Self-Host Stack
+# Run with: docker compose up -d
+#
+# This deploys:
+# - Plexus dashboard (pre-built image)
+# - PostgreSQL database
+# - Optional: MQTT broker for sensor bridges
+#
+# After starting, configure your agent:
+#   plexus login --endpoint http://localhost:3000
+#
+# Or for local network access:
+#   plexus login --endpoint http://YOUR_IP:3000
+
+services:
+  # PostgreSQL database
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: plexus
+      POSTGRES_USER: plexus
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-plexus_secret_change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plexus"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Plexus dashboard
+  plexus:
+    image: ghcr.io/plexus-oss/plexus:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Database
+      DATABASE_URL: postgres://plexus:${DB_PASSWORD:-plexus_secret_change_me}@db:5432/plexus
+
+      # Self-host mode
+      PLEXUS_SELF_HOST: "true"
+      NEXT_PUBLIC_APP_URL: ${PUBLIC_URL:-http://localhost:3000}
+
+      # Local auth (no Clerk needed for self-host)
+      PLEXUS_LOCAL_AUTH: "true"
+
+      # Optional: Enable MQTT broker integration
+      MQTT_BROKER_URL: ${MQTT_BROKER_URL:-mqtt://mqtt:1883}
+    ports:
+      - "3000:3000"
+    volumes:
+      - plexus_data:/app/data
+
+  # Optional: MQTT broker for sensor bridges
+  mqtt:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    profiles:
+      - mqtt
+    ports:
+      - "1883:1883"
+      - "9001:9001"  # WebSocket
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqtt_data:/mosquitto/data
+      - mqtt_logs:/mosquitto/log
+
+volumes:
+  postgres_data:
+  plexus_data:
+  mqtt_data:
+  mqtt_logs:

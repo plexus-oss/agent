@@ -7,7 +7,7 @@ Config is stored in ~/.plexus/config.json
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 CONFIG_DIR = Path.home() / ".plexus"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -17,6 +17,14 @@ DEFAULT_CONFIG = {
     "endpoint": "https://app.plexusaero.space",
     "device_id": None,
 }
+
+# Common local endpoints to check for self-hosted instances
+LOCAL_ENDPOINTS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://plexus.local:3000",
+    "http://plexus:3000",
+]
 
 
 def get_config_path() -> Path:
@@ -80,3 +88,53 @@ def get_device_id() -> Optional[str]:
         save_config(config)
 
     return device_id
+
+
+def discover_local_instance(timeout: float = 1.0) -> Optional[str]:
+    """
+    Try to discover a local Plexus instance.
+
+    Checks common local endpoints for a running Plexus server.
+    Returns the endpoint URL if found, None otherwise.
+
+    Args:
+        timeout: Timeout in seconds for each endpoint check
+
+    Returns:
+        The discovered endpoint URL or None
+    """
+    try:
+        import requests
+    except ImportError:
+        return None
+
+    for endpoint in LOCAL_ENDPOINTS:
+        try:
+            # Try to hit the health/ingest endpoint
+            response = requests.get(
+                f"{endpoint}/api/ingest",
+                timeout=timeout,
+            )
+            # Any response (even 405 Method Not Allowed) means server is running
+            if response.status_code in [200, 401, 405]:
+                return endpoint
+        except requests.exceptions.RequestException:
+            continue
+
+    return None
+
+
+def discover_and_configure() -> Optional[str]:
+    """
+    Discover local instance and update config if found.
+
+    Returns the discovered endpoint or None.
+    """
+    discovered = discover_local_instance()
+    if discovered:
+        config = load_config()
+        # Only update if no endpoint is configured or it's the default cloud
+        if config.get("endpoint") == DEFAULT_CONFIG["endpoint"]:
+            config["endpoint"] = discovered
+            save_config(config)
+    return discovered

@@ -6,17 +6,55 @@
 
 ```bash
 pip install plexus-agent
-plexus init        # paste your API key from app.plexusaero.space
-plexus send temperature 72.5
+plexus login                   # Opens browser to authenticate
+plexus send temperature 72.5   # Data flowing in 60 seconds
 ```
 
 That's it. Works on any device with Python - Raspberry Pi, servers, laptops, containers.
 
-## Get Your API Key
+> **Note:** `plexus login` connects to [Plexus Cloud](https://app.plexusaero.space) by default. Your data is stored on Plexus servers. For self-hosted deployments where you control the data, see [Self-Hosting](#self-hosting).
 
-1. Go to [app.plexusaero.space/settings](https://app.plexusaero.space/settings?tab=connections)
-2. Create an API key
-3. Copy the key and paste it when running `plexus init`
+## Installation
+
+```bash
+pip install plexus-agent
+
+# With MQTT support
+pip install plexus-agent[mqtt]
+```
+
+Or use the one-liner:
+
+```bash
+curl -fsSL https://app.plexusaero.space/install.sh | bash
+```
+
+## Authentication
+
+### Browser Login (Recommended)
+
+```bash
+plexus login
+```
+
+Opens your browser to sign in. API key is saved automatically.
+
+### Manual Setup
+
+If you prefer, get an API key from [app.plexusaero.space/settings](https://app.plexusaero.space/settings?tab=connections):
+
+```bash
+plexus init
+# Paste your API key when prompted
+```
+
+### Self-Hosted
+
+See [SELF-HOST.md](./SELF-HOST.md) for running Plexus on your own infrastructure.
+
+```bash
+plexus login --endpoint http://your-server:3000
+```
 
 ## Sending Data
 
@@ -73,12 +111,17 @@ with px.session("motor-test-001"):
 
 | Command | Description |
 |---------|-------------|
-| `plexus init` | Set up API key |
+| `plexus login` | Authenticate via browser (recommended) |
+| `plexus init` | Set up API key manually |
 | `plexus send <metric> <value>` | Send a single value |
 | `plexus stream <metric>` | Stream from stdin |
+| `plexus import <file>` | Import from CSV/TSV file |
+| `plexus mqtt-bridge` | Bridge MQTT to Plexus |
 | `plexus status` | Check connection |
+| `plexus discover` | Find local Plexus instances |
+| `plexus config` | Show current configuration |
 
-### Examples
+### Send Examples
 
 ```bash
 # Send with tags
@@ -93,6 +136,70 @@ cat data.txt | plexus stream pressure -r 100
 # Stream with session
 python read_motor.py | plexus stream motor.rpm -s test-001
 ```
+
+### Import CSV Files
+
+Import historical data from CSV or TSV files:
+
+```bash
+# Basic import
+plexus import sensor_data.csv
+
+# With session grouping (for playback)
+plexus import flight_log.csv -s "flight-001"
+
+# Custom timestamp column and format
+plexus import data.csv -t time_ms --timestamp-format unix_ms
+
+# Preview without uploading
+plexus import data.csv --dry-run
+```
+
+Supported timestamp formats: `auto`, `unix`, `unix_ms`, `iso`
+
+### MQTT Bridge
+
+Forward MQTT messages to Plexus:
+
+```bash
+# Install MQTT support
+pip install plexus-agent[mqtt]
+
+# Connect to local broker
+plexus mqtt-bridge
+
+# Specific broker and topic
+plexus mqtt-bridge -b mqtt.example.com -t "sensors/#"
+
+# With authentication
+plexus mqtt-bridge -b broker.hivemq.com -u user --password pass
+
+# Strip topic prefix (sensors/temp → temp)
+plexus mqtt-bridge -t "home/sensors/#" --prefix "home/"
+```
+
+## Self-Hosting
+
+Run Plexus on your own infrastructure. Your data stays on your servers.
+
+```bash
+# Deploy the stack
+git clone https://github.com/plexus-oss/agent
+cd agent
+docker compose up -d
+
+# Connect to YOUR instance (--endpoint is required for self-hosted)
+plexus login --endpoint http://localhost:3000
+```
+
+**Important:** The `--endpoint` flag tells the agent where to send data. Without it, data goes to Plexus Cloud.
+
+```bash
+# Verify your agent is pointing to the right place
+plexus config
+```
+
+See [SELF-HOST.md](./SELF-HOST.md) for full documentation including LAN discovery, MQTT setup, and production configuration.
 
 ## Configuration
 
