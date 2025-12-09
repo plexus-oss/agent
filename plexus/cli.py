@@ -99,7 +99,7 @@ def login(endpoint: Optional[str], no_browser: bool):
     except requests.exceptions.ConnectionError:
         click.secho(f"  ✗ Could not connect to {base_endpoint}", fg="red")
         click.echo("\n  Check your internet connection or try:")
-        click.echo(f"    plexus login --endpoint http://localhost:3000")
+        click.echo("    plexus login --endpoint http://localhost:3000")
         sys.exit(1)
     except Exception as e:
         click.secho(f"  ✗ Error: {e}", fg="red")
@@ -111,9 +111,9 @@ def login(endpoint: Optional[str], no_browser: bool):
     if not no_browser:
         click.echo("  Opening browser...")
         webbrowser.open(verification_url)
-        click.echo(f"  If browser doesn't open, visit:")
+        click.echo("  If browser doesn't open, visit:")
     else:
-        click.echo(f"  Visit this URL to authorize:")
+        click.echo("  Visit this URL to authorize:")
 
     click.echo(f"  {verification_url}\n")
     click.secho("  No account? You can sign up from the browser.", fg="cyan")
@@ -450,7 +450,7 @@ def discover(auto_configure: bool):
         # Discover and auto-configure
         plexus discover --auto-configure
     """
-    from plexus.config import discover_local_instance, LOCAL_ENDPOINTS
+    from plexus.config import LOCAL_ENDPOINTS
 
     click.echo("\nPlexus Discovery")
     click.echo("─" * 40)
@@ -483,12 +483,12 @@ def discover(auto_configure: bool):
             config = load_config()
             config["endpoint"] = found
             save_config(config)
-            click.echo(f"  Configuration updated!")
+            click.echo("  Configuration updated!")
             click.echo(f"  Now run: plexus login --endpoint {found}")
         else:
-            click.echo(f"  To use this instance, run:")
+            click.echo("  To use this instance, run:")
             click.echo(f"    plexus login --endpoint {found}")
-            click.echo(f"\n  Or with --auto-configure to save automatically")
+            click.echo("\n  Or with --auto-configure to save automatically")
     else:
         click.secho("\n  No local Plexus instance found.\n", fg="yellow")
         click.echo("  To self-host, see: https://docs.plexusaero.space/self-host")
@@ -620,7 +620,7 @@ def import_file(
                     break
 
             if not ts_col:
-                click.secho(f"Warning: No timestamp column found. Using row index.", fg="yellow")
+                click.secho("Warning: No timestamp column found. Using row index.", fg="yellow")
 
             # Metric columns are all non-timestamp columns
             metric_cols = [h for h in headers if h != ts_col]
@@ -706,7 +706,7 @@ def import_file(
             if session and not px.is_local:
                 click.echo(f"\n  View session: {get_endpoint()}/sessions/{session}")
             if px.is_local:
-                click.echo(f"\n  Data saved to: ~/.plexus/data.jsonl")
+                click.echo("\n  Data saved to: ~/.plexus/data.jsonl")
                 click.echo("  To upload later, run 'plexus init' and re-import")
 
     except FileNotFoundError:

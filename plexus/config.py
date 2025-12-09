@@ -7,7 +7,7 @@ Config is stored in ~/.plexus/config.json
 import json
 import os
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 
 CONFIG_DIR = Path.home() / ".plexus"
 CONFIG_FILE = CONFIG_DIR / "config.json"
