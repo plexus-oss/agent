@@ -2,14 +2,26 @@
 
 Run Plexus on your own infrastructure with full control over your data.
 
+## What's Open Source vs Closed Source
+
+Plexus uses a split model:
+
+| Component               | License      | Notes                                    |
+| ----------------------- | ------------ | ---------------------------------------- |
+| **Agent (this repo)**   | Apache 2.0   | CLI + Python SDK - fully open source     |
+| **Dashboard + Backend** | Proprietary  | Closed-source, distributed as Docker image |
+| **Database schema**     | Apache 2.0   | PostgreSQL schema included in this repo  |
+
+**What this means:** When you self-host, you run the agent (open source) against a pre-built Docker image containing the dashboard and API server (closed source). Your data stays on your infrastructure, but you cannot inspect or modify the server code.
+
 ## Cloud vs Self-Hosted
 
-| | Plexus Cloud | Self-Hosted |
-|---|---|---|
-| **Setup** | `plexus login` | Docker Compose |
-| **Data location** | Plexus servers | Your infrastructure |
-| **Maintenance** | Managed by Plexus | You manage |
-| **Best for** | Quick start, small teams | Enterprise, air-gapped, compliance |
+|                   | Plexus Cloud             | Self-Hosted                              |
+| ----------------- | ------------------------ | ---------------------------------------- |
+| **Setup**         | `plexus login`           | Docker Compose                           |
+| **Data location** | Plexus servers           | Your infrastructure                      |
+| **Server code**   | Managed by Plexus        | Closed-source image on your servers      |
+| **Best for**      | Quick start, small teams | Data sovereignty, air-gapped, compliance |
 
 **Important:** When you run `plexus login` (without `--endpoint`), your data goes to Plexus Cloud at `app.plexusaero.space`. For self-hosted, you must specify your own endpoint.
 
@@ -32,11 +44,13 @@ The `--endpoint` flag is required for self-hosted. Without it, `plexus login` co
 
 ## What's Included
 
-| Service | Port | Description |
-|---------|------|-------------|
-| **Plexus Dashboard** | 3000 | Web UI and API |
-| **PostgreSQL** | 5432 | Time-series data storage |
-| **MQTT Broker** (optional) | 1883, 9001 | For sensor bridges |
+| Service                    | Port       | Description                              |
+| -------------------------- | ---------- | ---------------------------------------- |
+| **Plexus Server**          | 3000       | Web UI and API (closed-source image)     |
+| **PostgreSQL**             | 5432       | Time-series data storage (you own this)  |
+| **MQTT Broker** (optional) | 1883, 9001 | For sensor bridges                       |
+
+The Plexus server image is pulled from `ghcr.io/plexus-oss/plexus:latest`. While you cannot modify or build the server from source, your telemetry data is stored entirely in your PostgreSQL instance.
 
 ## Connecting Agents
 
@@ -130,11 +144,13 @@ plexus mqtt-bridge -b localhost -t "sensors/#"
 ## Accessing from Other Machines
 
 1. Set `PUBLIC_URL` in your `.env`:
+
    ```bash
    PUBLIC_URL=http://192.168.1.100:3000
    ```
 
 2. Restart:
+
    ```bash
    docker compose down && docker compose up -d
    ```
@@ -147,6 +163,7 @@ plexus mqtt-bridge -b localhost -t "sensors/#"
 ## Data Persistence
 
 Data is stored in Docker volumes:
+
 - `postgres_data` - All telemetry and configuration
 - `mqtt_data` - MQTT broker state (if enabled)
 
@@ -170,18 +187,21 @@ docker compose up -d
 ## Troubleshooting
 
 ### Check logs
+
 ```bash
 docker compose logs -f plexus
 docker compose logs -f db
 ```
 
 ### Reset everything
+
 ```bash
 docker compose down -v  # Warning: deletes all data
 docker compose up -d
 ```
 
 ### Connection issues
+
 ```bash
 # Test if Plexus is running
 curl http://localhost:3000/api/ingest
@@ -218,11 +238,13 @@ plexus config set endpoint http://your-server:3000
 ## Resource Requirements
 
 **Minimum:**
+
 - 1 CPU core
 - 1 GB RAM
 - 10 GB disk
 
 **Recommended:**
+
 - 2+ CPU cores
 - 4 GB RAM
 - SSD storage

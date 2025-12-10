@@ -199,6 +199,8 @@ plexus login --endpoint http://localhost:3000
 plexus config
 ```
 
+> **Note on licensing:** The agent (this repo) is fully open source (Apache 2.0). The dashboard and API server are closed-source but distributed as a Docker image you can run on your infrastructure. Your telemetry data is stored in PostgreSQL on your servers. See [SELF-HOST.md](./SELF-HOST.md) for details.
+
 See [SELF-HOST.md](./SELF-HOST.md) for full documentation including LAN discovery, MQTT setup, and production configuration.
 
 ## Configuration
