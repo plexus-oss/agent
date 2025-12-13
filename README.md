@@ -14,6 +14,8 @@ That's it. Works on any device with Python - Raspberry Pi, servers, laptops, con
 
 > **Note:** `plexus login` connects to [Plexus Cloud](https://app.plexusaero.space) by default. Your data is stored on Plexus servers. For self-hosted deployments where you control the data, see [Self-Hosting](#self-hosting).
 
+**Not using Python?** You can send data with any HTTP client. See [API.md](./API.md) for curl, JavaScript, Go, and Arduino examples.
+
 ## Installation
 
 ```bash
@@ -109,17 +111,17 @@ with px.session("motor-test-001"):
 
 ## CLI Reference
 
-| Command | Description |
-|---------|-------------|
-| `plexus login` | Authenticate via browser (recommended) |
-| `plexus init` | Set up API key manually |
-| `plexus send <metric> <value>` | Send a single value |
-| `plexus stream <metric>` | Stream from stdin |
-| `plexus import <file>` | Import from CSV/TSV file |
-| `plexus mqtt-bridge` | Bridge MQTT to Plexus |
-| `plexus status` | Check connection |
-| `plexus discover` | Find local Plexus instances |
-| `plexus config` | Show current configuration |
+| Command                        | Description                            |
+| ------------------------------ | -------------------------------------- |
+| `plexus login`                 | Authenticate via browser (recommended) |
+| `plexus init`                  | Set up API key manually                |
+| `plexus send <metric> <value>` | Send a single value                    |
+| `plexus stream <metric>`       | Stream from stdin                      |
+| `plexus import <file>`         | Import from CSV/TSV file               |
+| `plexus mqtt-bridge`           | Bridge MQTT to Plexus                  |
+| `plexus status`                | Check connection                       |
+| `plexus discover`              | Find local Plexus instances            |
+| `plexus config`                | Show current configuration             |
 
 ### Send Examples
 

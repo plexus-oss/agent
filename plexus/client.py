@@ -10,6 +10,13 @@ Usage:
     # With tags
     px.send("motor.rpm", 3450, tags={"motor_id": "A1"})
 
+    # Flexible value types (not just numbers!)
+    px.send("robot.state", "MOVING")                    # String states
+    px.send("error.code", "E_MOTOR_STALL")              # Error codes
+    px.send("position", {"x": 1.5, "y": 2.3, "z": 0.8}) # Complex objects
+    px.send("joint_angles", [0.5, 1.2, -0.3, 0.0])      # Arrays
+    px.send("motor.enabled", True)                      # Booleans
+
     # Batch send
     px.send_batch([
         ("temperature", 72.5),
@@ -32,6 +39,9 @@ import json
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+# Flexible value type - supports any JSON-serializable value
+FlexValue = Union[int, float, str, bool, Dict[str, Any], List[Any]]
 
 import requests
 
@@ -107,11 +117,19 @@ class Plexus:
     def _make_point(
         self,
         metric: str,
-        value: Union[int, float],
+        value: FlexValue,
         timestamp: Optional[float] = None,
         tags: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        """Create a data point dictionary."""
+        """Create a data point dictionary.
+
+        Value can be:
+            - number (int/float): Traditional sensor readings
+            - string: State machines, error codes, status
+            - bool: Binary flags, enabled/disabled states
+            - dict: Complex objects, vectors, nested data
+            - list: Arrays, coordinates, multi-value readings
+        """
         point = {
             "metric": metric,
             "value": value,
@@ -127,7 +145,7 @@ class Plexus:
     def send(
         self,
         metric: str,
-        value: Union[int, float],
+        value: FlexValue,
         timestamp: Optional[float] = None,
         tags: Optional[Dict[str, str]] = None,
     ) -> bool:
@@ -136,7 +154,12 @@ class Plexus:
 
         Args:
             metric: Name of the metric (e.g., "temperature", "motor.rpm")
-            value: Numeric value to send
+            value: Value to send. Can be:
+                   - number (int/float): px.send("temp", 72.5)
+                   - string: px.send("state", "RUNNING")
+                   - bool: px.send("enabled", True)
+                   - dict: px.send("pos", {"x": 1, "y": 2})
+                   - list: px.send("angles", [0.5, 1.2, -0.3])
             timestamp: Unix timestamp. If not provided, uses current time.
             tags: Optional key-value tags for the metric
 
@@ -150,6 +173,8 @@ class Plexus:
         Example:
             px.send("temperature", 72.5)
             px.send("motor.rpm", 3450, tags={"motor_id": "A1"})
+            px.send("robot.state", "IDLE")
+            px.send("position", {"x": 1.5, "y": 2.3, "z": 0.0})
         """
         point = self._make_point(metric, value, timestamp, tags)
 
@@ -160,7 +185,7 @@ class Plexus:
 
     def send_batch(
         self,
-        points: List[Tuple[str, Union[int, float]]],
+        points: List[Tuple[str, FlexValue]],
         timestamp: Optional[float] = None,
         tags: Optional[Dict[str, str]] = None,
     ) -> bool:
@@ -168,7 +193,7 @@ class Plexus:
         Send multiple metrics at once.
 
         Args:
-            points: List of (metric, value) tuples
+            points: List of (metric, value) tuples. Values can be any FlexValue type.
             timestamp: Shared timestamp for all points. If not provided, uses current time.
             tags: Shared tags for all points
 
@@ -179,7 +204,8 @@ class Plexus:
             px.send_batch([
                 ("temperature", 72.5),
                 ("humidity", 45.2),
-                ("pressure", 1013.25),
+                ("robot.state", "RUNNING"),
+                ("position", {"x": 1.0, "y": 2.0}),
             ])
         """
         ts = timestamp or time.time()

@@ -781,8 +781,14 @@ def mqtt_bridge(
     """
     Bridge MQTT messages to Plexus.
 
-    Subscribes to MQTT topics and forwards numeric values to Plexus.
+    Subscribes to MQTT topics and forwards values to Plexus.
     Topic names become metric names (e.g., sensors/temp → sensors.temp).
+
+    Now supports flexible value types:
+        - Numbers: 72.5 → sent as number
+        - Strings: "RUNNING" → sent as string
+        - JSON objects: {"x": 1, "y": 2} → sent as object or expanded
+        - Arrays: [1, 2, 3] → sent as array
 
     Examples:
 
@@ -800,12 +806,12 @@ def mqtt_bridge(
 
     Requires: pip install plexus-agent[mqtt]
     """
+    # Try using the new adapter system
     try:
-        import paho.mqtt.client as mqtt
+        from plexus.adapters import MQTTAdapter, AdapterState
+        use_adapter = True
     except ImportError:
-        click.secho("MQTT support not installed. Run:", fg="red")
-        click.echo("  pip install plexus-agent[mqtt]")
-        sys.exit(1)
+        use_adapter = False
 
     api_key = get_api_key()
     if not api_key:
@@ -824,75 +830,140 @@ def mqtt_bridge(
     px = Plexus()
     count = [0]  # Use list for closure
 
-    def on_connect(client, userdata, flags, rc, properties=None):
-        if rc == 0:
-            click.secho("  ✓ Connected to MQTT broker", fg="green")
-            client.subscribe(topic)
-            click.echo(f"  Subscribed to: {topic}")
-        else:
-            click.secho(f"  ✗ Connection failed: {rc}", fg="red")
-
-    def on_message(client, userdata, msg):
+    if use_adapter:
+        # Use new adapter system
         try:
-            # Convert topic to metric name
-            metric = msg.topic
-            if prefix and metric.startswith(prefix):
-                metric = metric[len(prefix):]
-            metric = metric.replace("/", ".")
+            adapter = MQTTAdapter(
+                broker=broker,
+                port=port,
+                topic=topic,
+                username=username,
+                password=password,
+                prefix=prefix,
+            )
 
-            # Try to parse value
-            payload = msg.payload.decode("utf-8").strip()
+            def on_data(metrics):
+                for m in metrics:
+                    px.send(
+                        m.name,
+                        m.value,
+                        timestamp=m.timestamp,
+                        tags=m.tags,
+                    )
+                    count[0] += 1
 
-            # Handle JSON payloads
-            if payload.startswith("{"):
-                import json
-                data = json.loads(payload)
-                # Send each numeric field
-                for key, value in data.items():
-                    if isinstance(value, (int, float)):
-                        full_metric = f"{metric}.{key}" if metric else key
-                        px.send(full_metric, value)
-                        count[0] += 1
+                if count[0] % 100 == 0:
+                    click.echo(f"  Forwarded {count[0]} messages", err=True)
+
+            def on_state_change(state):
+                if state == AdapterState.CONNECTED:
+                    click.secho("  ✓ Connected to MQTT broker", fg="green")
+                    click.echo(f"  Subscribed to: {topic}")
+                elif state == AdapterState.ERROR:
+                    click.secho(f"  ✗ Error: {adapter.error}", fg="red")
+                elif state == AdapterState.RECONNECTING:
+                    click.secho("  Reconnecting...", fg="yellow")
+
+            context = px.session(session) if session else nullcontext()
+            with context:
+                adapter.run(on_data=on_data, on_state_change=on_state_change)
+
+        except KeyboardInterrupt:
+            click.echo(f"\n  Stopped. Forwarded {count[0]} messages total.")
+        except ImportError as e:
+            click.secho(f"MQTT support not installed. Run:", fg="red")
+            click.echo("  pip install plexus-agent[mqtt]")
+            sys.exit(1)
+        except Exception as e:
+            click.secho(f"\n  Error: {e}", fg="red")
+            sys.exit(1)
+    else:
+        # Fallback to direct paho-mqtt usage
+        try:
+            import paho.mqtt.client as mqtt
+        except ImportError:
+            click.secho("MQTT support not installed. Run:", fg="red")
+            click.echo("  pip install plexus-agent[mqtt]")
+            sys.exit(1)
+
+        def on_connect(client, userdata, flags, rc, properties=None):
+            if rc == 0:
+                click.secho("  ✓ Connected to MQTT broker", fg="green")
+                client.subscribe(topic)
+                click.echo(f"  Subscribed to: {topic}")
             else:
-                # Try as simple numeric value
-                value = float(payload)
-                px.send(metric, value)
-                count[0] += 1
+                click.secho(f"  ✗ Connection failed: {rc}", fg="red")
 
-            if count[0] % 100 == 0:
-                click.echo(f"  Forwarded {count[0]} messages", err=True)
+        def on_message(client, userdata, msg):
+            try:
+                # Convert topic to metric name
+                metric = msg.topic
+                if prefix and metric.startswith(prefix):
+                    metric = metric[len(prefix):]
+                metric = metric.replace("/", ".")
 
-        except (ValueError, json.JSONDecodeError):
-            pass  # Skip non-numeric messages
-        except PlexusError as e:
-            click.echo(f"  Error sending: {e}", err=True)
+                # Try to parse value
+                payload = msg.payload.decode("utf-8").strip()
 
-    def on_disconnect(client, userdata, rc, properties=None):
-        if rc != 0:
-            click.secho(f"  Disconnected unexpectedly: {rc}", fg="yellow")
+                # Handle JSON payloads
+                if payload.startswith("{"):
+                    import json
+                    data = json.loads(payload)
+                    # Send each field (now supports any JSON type!)
+                    for key, value in data.items():
+                        if isinstance(value, (int, float, str, bool, dict, list)):
+                            full_metric = f"{metric}.{key}" if metric else key
+                            px.send(full_metric, value)
+                            count[0] += 1
+                elif payload.startswith("["):
+                    # Array payload - send as array value
+                    import json
+                    data = json.loads(payload)
+                    px.send(metric, data)
+                    count[0] += 1
+                else:
+                    # Try as numeric value first
+                    try:
+                        value = float(payload)
+                        px.send(metric, value)
+                    except ValueError:
+                        # Send as string value
+                        px.send(metric, payload)
+                    count[0] += 1
 
-    # Set up MQTT client
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-    client.on_connect = on_connect
-    client.on_message = on_message
-    client.on_disconnect = on_disconnect
+                if count[0] % 100 == 0:
+                    click.echo(f"  Forwarded {count[0]} messages", err=True)
 
-    if username:
-        client.username_pw_set(username, password)
+            except (ValueError, json.JSONDecodeError):
+                pass  # Skip unparseable messages
+            except PlexusError as e:
+                click.echo(f"  Error sending: {e}", err=True)
 
-    try:
-        # Use session context if provided
-        context = px.session(session) if session else nullcontext()
+        def on_disconnect(client, userdata, rc, properties=None):
+            if rc != 0:
+                click.secho(f"  Disconnected unexpectedly: {rc}", fg="yellow")
 
-        with context:
-            client.connect(broker, port, keepalive=60)
-            client.loop_forever()
-    except KeyboardInterrupt:
-        click.echo(f"\n  Stopped. Forwarded {count[0]} messages total.")
-        client.disconnect()
-    except Exception as e:
-        click.secho(f"\n  Error: {e}", fg="red")
-        sys.exit(1)
+        # Set up MQTT client
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        client.on_connect = on_connect
+        client.on_message = on_message
+        client.on_disconnect = on_disconnect
+
+        if username:
+            client.username_pw_set(username, password)
+
+        try:
+            context = px.session(session) if session else nullcontext()
+
+            with context:
+                client.connect(broker, port, keepalive=60)
+                client.loop_forever()
+        except KeyboardInterrupt:
+            click.echo(f"\n  Stopped. Forwarded {count[0]} messages total.")
+            client.disconnect()
+        except Exception as e:
+            click.secho(f"\n  Error: {e}", fg="red")
+            sys.exit(1)
 
 
 # Null context manager for Python 3.8 compatibility
