@@ -31,16 +31,13 @@ Requires: pip install plexus-agent[mqtt]
 
 import json
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, List, Optional
 
 from plexus.adapters.base import (
     ProtocolAdapter,
     Metric,
     AdapterConfig,
     AdapterState,
-    AdapterError,
-    ConnectionError,
-    DataCallback,
 )
 from plexus.adapters.registry import AdapterRegistry
 
@@ -106,9 +103,8 @@ class MQTTAdapter(ProtocolAdapter):
 
     def _check_mqtt_installed(self) -> None:
         """Check if paho-mqtt is installed."""
-        try:
-            import paho.mqtt.client as mqtt
-        except ImportError:
+        import importlib.util
+        if importlib.util.find_spec("paho.mqtt.client") is None:
             raise ImportError(
                 "MQTT support not installed. Run: pip install plexus-agent[mqtt]"
             )
@@ -219,7 +215,7 @@ class MQTTAdapter(ProtocolAdapter):
                 self._pending_metrics.extend(metrics)
                 self._emit_data(metrics)
                 self.on_data(metrics)
-        except Exception as e:
+        except Exception:
             # Log but don't crash on parse errors
             pass
 

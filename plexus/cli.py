@@ -15,7 +15,6 @@ Usage:
 import csv
 import sys
 import time
-from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 
@@ -793,8 +792,8 @@ def mqtt_bridge(
 
         except KeyboardInterrupt:
             click.echo(f"\n  Stopped. Forwarded {count[0]} messages total.")
-        except ImportError as e:
-            click.secho(f"MQTT support not installed. Run:", fg="red")
+        except ImportError:
+            click.secho("MQTT support not installed. Run:", fg="red")
             click.echo("  pip install plexus-agent[mqtt]")
             sys.exit(1)
         except Exception as e:
@@ -929,8 +928,6 @@ def record(name: Optional[str], label: tuple, description: Optional[str]):
     The recording can be labeled, played back, and exported from
     the Plexus dashboard.
     """
-    import uuid
-
     # Generate name if not provided
     if not name:
         from datetime import datetime
@@ -1244,7 +1241,6 @@ def import_bag(
             sys.exit(1)
 
         uploaded = [0]
-        total = schema.message_count
 
         def progress(count, total):
             uploaded[0] = count

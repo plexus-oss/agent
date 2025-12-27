@@ -37,12 +37,12 @@ import time
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-# Flexible value type - supports any JSON-serializable value
-FlexValue = Union[int, float, str, bool, Dict[str, Any], List[Any]]
-
 import requests
 
 from plexus.config import get_api_key, get_device_id, get_endpoint, require_login
+
+# Flexible value type - supports any JSON-serializable value
+FlexValue = Union[int, float, str, bool, Dict[str, Any], List[Any]]
 
 
 class PlexusError(Exception):

@@ -26,11 +26,9 @@ Usage:
     importer.upload_to_plexus(px, session_id="robot-test-001")
 """
 
-import os
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Tuple, Union
+from typing import Any, Dict, Generator, List, Optional, Union
 
 from plexus.adapters.base import Metric
 
@@ -378,10 +376,6 @@ class RosbagImporter:
         batch = []
 
         with Reader(self.bag_path) as reader:
-            # Build type store for deserialization
-            from rosbags.typesys import get_types_from_msg, register_types
-            typestore = {}
-
             for connection, timestamp, rawdata in reader.messages():
                 # Filter topics if specified
                 if self.topics_filter and connection.topic not in self.topics_filter:
@@ -410,7 +404,7 @@ class RosbagImporter:
                         yield batch
                         batch = []
 
-                except Exception as e:
+                except Exception:
                     # Skip messages that fail to deserialize
                     continue
 
@@ -458,7 +452,7 @@ class RosbagImporter:
                         yield batch
                         batch = []
 
-                except Exception as e:
+                except Exception:
                     # Skip messages that fail to deserialize
                     continue
 
@@ -649,7 +643,7 @@ class RosbagImporter:
                     if progress_callback:
                         progress_callback(uploaded, total_messages)
 
-                except Exception as e:
+                except Exception:
                     errors += 1
 
         return {
@@ -705,7 +699,7 @@ class RosbagImporter:
         if not image_topics:
             return {"error": "No image topics found", "frames_extracted": 0}
 
-        rosbags = self._ensure_rosbags()
+        self._ensure_rosbags()
         from rosbags.rosbag2 import Reader
         from rosbags.rosbag1 import Reader as Reader1
         from rosbags.serde import deserialize_cdr
@@ -773,7 +767,7 @@ class RosbagImporter:
                     frames_extracted += 1
                     last_frame_time[connection.topic] = ts
 
-                except Exception as e:
+                except Exception:
                     continue
 
         return {

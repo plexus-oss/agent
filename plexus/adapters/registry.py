@@ -22,7 +22,7 @@ Usage:
 """
 
 from typing import Any, Dict, List, Optional, Type
-from plexus.adapters.base import ProtocolAdapter, AdapterConfig
+from plexus.adapters.base import ProtocolAdapter
 
 
 class AdapterRegistryMeta(type):
