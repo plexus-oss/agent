@@ -30,12 +30,9 @@ Usage:
             px.send("temperature", read_temp())
             time.sleep(0.01)
 
-    # Local mode (no API key needed)
-    px = Plexus(local=True)  # or just don't configure API key
-    px.send("temperature", 72.5)  # writes to ~/.plexus/data.jsonl
+Note: Requires login first. Run 'plexus login' to connect your account.
 """
 
-import json
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -45,7 +42,7 @@ FlexValue = Union[int, float, str, bool, Dict[str, Any], List[Any]]
 
 import requests
 
-from plexus.config import get_api_key, get_device_id, get_endpoint, CONFIG_DIR
+from plexus.config import get_api_key, get_device_id, get_endpoint, require_login
 
 
 class PlexusError(Exception):
@@ -70,8 +67,9 @@ class Plexus:
         endpoint: API endpoint URL. Defaults to https://app.plexusaero.space
         device_id: Unique identifier for this device. Auto-generated if not provided.
         timeout: Request timeout in seconds. Default 10s.
-        local: Force local mode (write to file instead of cloud). If no API key
-               is configured, local mode is used automatically.
+
+    Raises:
+        RuntimeError: If not logged in (no API key configured)
     """
 
     def __init__(
@@ -80,17 +78,16 @@ class Plexus:
         endpoint: Optional[str] = None,
         device_id: Optional[str] = None,
         timeout: float = 10.0,
-        local: bool = False,
     ):
         self.api_key = api_key or get_api_key()
+
+        # Require login if no API key provided
+        if not self.api_key:
+            require_login()
+
         self.endpoint = (endpoint or get_endpoint()).rstrip("/")
         self.device_id = device_id or get_device_id()
         self.timeout = timeout
-
-        # Local mode: write to file instead of cloud
-        # Automatically enabled if no API key is configured
-        self._local_mode = local or (not self.api_key)
-        self._local_file = CONFIG_DIR / "data.jsonl"
 
         self._session_id: Optional[str] = None
         self._session: Optional[requests.Session] = None
@@ -98,11 +95,6 @@ class Plexus:
         # Buffer for batch operations
         self._buffer: List[Dict[str, Any]] = []
         self._buffer_size = 100
-
-    @property
-    def is_local(self) -> bool:
-        """Returns True if running in local mode (no cloud sync)."""
-        return self._local_mode
 
     def _get_session(self) -> requests.Session:
         """Get or create a requests session for connection pooling."""
@@ -177,10 +169,6 @@ class Plexus:
             px.send("position", {"x": 1.5, "y": 2.3, "z": 0.0})
         """
         point = self._make_point(metric, value, timestamp, tags)
-
-        if self._local_mode:
-            return self._write_local([point])
-
         return self._send_points([point])
 
     def send_batch(
@@ -210,10 +198,6 @@ class Plexus:
         """
         ts = timestamp or time.time()
         data_points = [self._make_point(m, v, ts, tags) for m, v in points]
-
-        if self._local_mode:
-            return self._write_local(data_points)
-
         return self._send_points(data_points)
 
     def _send_points(self, points: List[Dict[str, Any]]) -> bool:
@@ -245,21 +229,6 @@ class Plexus:
             raise PlexusError(f"Request timed out after {self.timeout}s")
         except requests.exceptions.ConnectionError as e:
             raise PlexusError(f"Connection failed: {e}")
-
-    def _write_local(self, points: List[Dict[str, Any]]) -> bool:
-        """Write data points to local JSONL file."""
-        try:
-            # Ensure directory exists
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-
-            # Append to JSONL file
-            with open(self._local_file, "a") as f:
-                for point in points:
-                    f.write(json.dumps(point) + "\n")
-
-            return True
-        except IOError as e:
-            raise PlexusError(f"Failed to write local data: {e}")
 
     @contextmanager
     def session(self, session_id: str, tags: Optional[Dict[str, str]] = None):

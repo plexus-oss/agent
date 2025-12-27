@@ -35,6 +35,21 @@ dependencies = [
 
 [project.optional-dependencies]
 mqtt = ["paho-mqtt>=1.6.0"]
+ros = [
+    "rosbags>=0.9.0",           # ROS1/ROS2 bag reading
+    "mcap>=1.0.0",               # MCAP format support
+]
+video = [
+    "opencv-python>=4.8.0",      # Video frame extraction
+    "numpy>=1.20.0",
+]
+all = [
+    "paho-mqtt>=1.6.0",
+    "rosbags>=0.9.0",
+    "mcap>=1.0.0",
+    "opencv-python>=4.8.0",
+    "numpy>=1.20.0",
+]
 dev = ["pytest", "pytest-cov", "ruff"]
 
 [project.scripts]

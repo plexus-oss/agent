@@ -1,76 +1,26 @@
 # Plexus Agent
 
-> Send sensor data to Plexus in one line of code.
+Send sensor data to [Plexus](https://app.plexusaero.space) in 3 commands.
 
 ## Quick Start
 
 ```bash
 pip install plexus-agent
-plexus login                   # Opens browser to authenticate
-plexus send temperature 72.5   # Data flowing in 60 seconds
-```
-
-That's it. Works on any device with Python - Raspberry Pi, servers, laptops, containers.
-
-> **Note:** `plexus login` connects to [Plexus Cloud](https://app.plexusaero.space) by default. Your data is stored on Plexus servers. For self-hosted deployments where you control the data, see [Self-Hosting](#self-hosting).
-
-**Not using Python?** You can send data with any HTTP client. See [API.md](./API.md) for curl, JavaScript, Go, and Arduino examples.
-
-## Installation
-
-```bash
-pip install plexus-agent
-
-# With MQTT support
-pip install plexus-agent[mqtt]
-```
-
-Or use the one-liner:
-
-```bash
-curl -fsSL https://app.plexusaero.space/install.sh | bash
-```
-
-## Authentication
-
-### Browser Login (Recommended)
-
-```bash
 plexus login
+plexus send temperature 72.5
 ```
 
-Opens your browser to sign in. API key is saved automatically.
+View your data at [app.plexusaero.space](https://app.plexusaero.space)
 
-### Manual Setup
-
-If you prefer, get an API key from [app.plexusaero.space/settings](https://app.plexusaero.space/settings?tab=connections):
-
-```bash
-plexus init
-# Paste your API key when prompted
-```
-
-### Self-Hosted
-
-See [SELF-HOST.md](./SELF-HOST.md) for running Plexus on your own infrastructure.
-
-```bash
-plexus login --endpoint http://your-server:3000
-```
+Works on Raspberry Pi, servers, laptops, containers - anything with Python.
 
 ## Sending Data
 
 ### Command Line
 
 ```bash
-# Basic
 plexus send temperature 72.5
-
-# With tags (for multiple sensors)
-plexus send motor.temperature 72.5 -t motor_id=A1
-plexus send motor.temperature 68.3 -t motor_id=A2
-
-# Stream from any script
+plexus send motor.rpm 3450 -t motor_id=A1
 python read_sensor.py | plexus stream temperature
 ```
 
@@ -80,12 +30,13 @@ python read_sensor.py | plexus stream temperature
 from plexus import Plexus
 
 px = Plexus()
-
-# Send values
 px.send("temperature", 72.5)
 px.send("motor.rpm", 3450, tags={"motor_id": "A1"})
+```
 
-# Batch send (more efficient)
+### Batch Send
+
+```python
 px.send_batch([
     ("temperature", 72.5),
     ("humidity", 45.2),
@@ -98,10 +49,6 @@ px.send_batch([
 Group related data for easy analysis:
 
 ```python
-from plexus import Plexus
-
-px = Plexus()
-
 with px.session("motor-test-001"):
     for _ in range(1000):
         px.send("temperature", read_temp())
@@ -111,111 +58,27 @@ with px.session("motor-test-001"):
 
 ## CLI Reference
 
-| Command                        | Description                            |
-| ------------------------------ | -------------------------------------- |
-| `plexus login`                 | Authenticate via browser (recommended) |
-| `plexus init`                  | Set up API key manually                |
-| `plexus send <metric> <value>` | Send a single value                    |
-| `plexus stream <metric>`       | Stream from stdin                      |
-| `plexus import <file>`         | Import from CSV/TSV file               |
-| `plexus mqtt-bridge`           | Bridge MQTT to Plexus                  |
-| `plexus status`                | Check connection                       |
-| `plexus discover`              | Find local Plexus instances            |
-| `plexus config`                | Show current configuration             |
+| Command | Description |
+|---------|-------------|
+| `plexus login` | Sign in via browser |
+| `plexus send <metric> <value>` | Send a value |
+| `plexus stream <metric>` | Stream from stdin |
+| `plexus import <file>` | Import CSV/TSV file |
+| `plexus status` | Check connection |
 
-### Send Examples
+### Import CSV
 
 ```bash
-# Send with tags
-plexus send motor.rpm 3450 -t motor_id=A1 -t location=lab
-
-# Send with timestamp
-plexus send pressure 1013.25 --timestamp 1699900000
-
-# Stream with rate limiting
-cat data.txt | plexus stream pressure -r 100
-
-# Stream with session
-python read_motor.py | plexus stream motor.rpm -s test-001
-```
-
-### Import CSV Files
-
-Import historical data from CSV or TSV files:
-
-```bash
-# Basic import
 plexus import sensor_data.csv
-
-# With session grouping (for playback)
 plexus import flight_log.csv -s "flight-001"
-
-# Custom timestamp column and format
-plexus import data.csv -t time_ms --timestamp-format unix_ms
-
-# Preview without uploading
 plexus import data.csv --dry-run
 ```
 
-Supported timestamp formats: `auto`, `unix`, `unix_ms`, `iso`
-
 ### MQTT Bridge
 
-Forward MQTT messages to Plexus:
-
 ```bash
-# Install MQTT support
 pip install plexus-agent[mqtt]
-
-# Connect to local broker
-plexus mqtt-bridge
-
-# Specific broker and topic
 plexus mqtt-bridge -b mqtt.example.com -t "sensors/#"
-
-# With authentication
-plexus mqtt-bridge -b broker.hivemq.com -u user --password pass
-
-# Strip topic prefix (sensors/temp → temp)
-plexus mqtt-bridge -t "home/sensors/#" --prefix "home/"
-```
-
-## Self-Hosting
-
-Run Plexus on your own infrastructure. Your data stays on your servers.
-
-```bash
-# Deploy the stack
-git clone https://github.com/plexus-oss/agent
-cd agent
-docker compose up -d
-
-# Connect to YOUR instance (--endpoint is required for self-hosted)
-plexus login --endpoint http://localhost:3000
-```
-
-**Important:** The `--endpoint` flag tells the agent where to send data. Without it, data goes to Plexus Cloud.
-
-```bash
-# Verify your agent is pointing to the right place
-plexus config
-```
-
-> **Note on licensing:** The agent (this repo) is fully open source (Apache 2.0). The dashboard and API server are closed-source but distributed as a Docker image you can run on your infrastructure. Your telemetry data is stored in PostgreSQL on your servers. See [SELF-HOST.md](./SELF-HOST.md) for details.
-
-See [SELF-HOST.md](./SELF-HOST.md) for full documentation including LAN discovery, MQTT setup, and production configuration.
-
-## Configuration
-
-Config is stored in `~/.plexus/config.json`.
-
-### Environment Variables
-
-Override config with environment variables:
-
-```bash
-export PLEXUS_API_KEY=plx_xxxxx
-export PLEXUS_ENDPOINT=https://plexus.yourcompany.com  # for self-hosted
 ```
 
 ## Examples
@@ -226,17 +89,13 @@ export PLEXUS_ENDPOINT=https://plexus.yourcompany.com  # for self-hosted
 from plexus import Plexus
 import adafruit_dht
 import board
-import time
 
 px = Plexus()
 dht = adafruit_dht.DHT22(board.D4)
 
 while True:
-    try:
-        px.send("temperature", dht.temperature)
-        px.send("humidity", dht.humidity)
-    except RuntimeError:
-        pass
+    px.send("temperature", dht.temperature)
+    px.send("humidity", dht.humidity)
     time.sleep(2)
 ```
 
@@ -256,24 +115,18 @@ while True:
         px.send(metric, float(value))
 ```
 
-### Motor Test Stand
+## Not Using Python?
 
-```python
-from plexus import Plexus
-import time
+Send data with any HTTP client:
 
-px = Plexus()
-
-with px.session("endurance-test-001"):
-    start = time.time()
-    while time.time() - start < 3600:  # 1 hour
-        px.send_batch([
-            ("motor.rpm", read_rpm()),
-            ("motor.current", read_current()),
-            ("motor.temperature", read_temp()),
-        ])
-        time.sleep(0.01)  # 100Hz
+```bash
+curl -X POST https://app.plexusaero.space/api/ingest \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"points": [{"metric": "temperature", "value": 72.5}]}'
 ```
+
+See [API.md](./API.md) for JavaScript, Go, and Arduino examples.
 
 ## License
 

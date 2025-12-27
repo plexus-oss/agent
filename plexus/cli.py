@@ -7,6 +7,7 @@ Usage:
     plexus send temperature 72.5   # Send a single value
     plexus stream temperature      # Stream from stdin
     plexus import data.csv         # Import from CSV file
+    plexus import-bag data.bag     # Import from ROS bag
     plexus mqtt-bridge             # Bridge MQTT to Plexus
     plexus status                  # Check connection
 """
@@ -14,6 +15,7 @@ Usage:
 import csv
 import sys
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 
@@ -49,27 +51,22 @@ def main():
 
 
 @main.command()
-@click.option("--endpoint", default=None, help="API endpoint (default: https://app.plexusaero.space)")
 @click.option("--no-browser", is_flag=True, help="Don't open browser automatically")
-def login(endpoint: Optional[str], no_browser: bool):
+def login(no_browser: bool):
     """
-    Authenticate with Plexus via your browser.
+    Sign in to Plexus via your browser.
 
-    This is the easiest way to connect. It will:
-    1. Open your browser to sign in
-    2. Automatically save your API key
-    3. You're ready to send data!
+    Opens your browser to sign in (or create an account).
+    Your API key is saved automatically.
 
     Example:
 
         plexus login
-
-        # Then immediately start sending data:
         plexus send temperature 72.5
     """
     import webbrowser
 
-    base_endpoint = endpoint or "https://app.plexusaero.space"
+    base_endpoint = "https://app.plexusaero.space"
 
     click.echo("\nPlexus Login")
     click.echo("─" * 40)
@@ -97,9 +94,8 @@ def login(endpoint: Optional[str], no_browser: bool):
         expires_in = data.get("expires_in", 900)
 
     except requests.exceptions.ConnectionError:
-        click.secho(f"  ✗ Could not connect to {base_endpoint}", fg="red")
-        click.echo("\n  Check your internet connection or try:")
-        click.echo("    plexus login --endpoint http://localhost:3000")
+        click.secho("  ✗ Could not connect to Plexus", fg="red")
+        click.echo("\n  Check your internet connection and try again.")
         sys.exit(1)
     except Exception as e:
         click.secho(f"  ✗ Error: {e}", fg="red")
@@ -138,13 +134,11 @@ def login(endpoint: Optional[str], no_browser: bool):
                 # Success!
                 token_data = poll_response.json()
                 api_key = token_data.get("api_key")
-                final_endpoint = token_data.get("endpoint", base_endpoint)
 
                 if api_key:
                     # Save to config
                     config = load_config()
                     config["api_key"] = api_key
-                    config["endpoint"] = final_endpoint
 
                     # Generate device ID if not present
                     if not config.get("device_id"):
@@ -154,14 +148,12 @@ def login(endpoint: Optional[str], no_browser: bool):
                     save_config(config)
 
                     click.echo("")
-                    click.secho("  ✓ Authenticated successfully!", fg="green")
+                    click.secho("  ✓ Logged in!", fg="green")
                     click.echo("─" * 40)
-                    click.echo(f"  Config saved to: {get_config_path()}")
-                    click.echo(f"  Device ID: {config['device_id']}")
-                    click.echo(f"  Endpoint: {final_endpoint}")
                     click.echo("\n  You're all set! Try:")
                     click.echo("    plexus send temperature 72.5")
-                    click.echo("    plexus status")
+                    click.echo("\n  View your data at:")
+                    click.echo("    https://app.plexusaero.space")
                     return
 
             elif poll_response.status_code == 202:
@@ -195,18 +187,15 @@ def login(endpoint: Optional[str], no_browser: bool):
 
 @main.command()
 @click.option("--api-key", prompt="API Key", hide_input=True, help="Your Plexus API key")
-@click.option("--endpoint", default=None, help="API endpoint (default: https://app.plexusaero.space)")
-def init(api_key: str, endpoint: Optional[str]):
+def init(api_key: str):
     """
-    Initialize Plexus with your API key.
+    Set up Plexus with an API key (for CI/CD environments).
 
+    For interactive use, 'plexus login' is easier.
     Get your API key from https://app.plexusaero.space/settings
     """
     config = load_config()
     config["api_key"] = api_key.strip()
-
-    if endpoint:
-        config["endpoint"] = endpoint.strip()
 
     # Generate device ID if not present
     if not config.get("device_id"):
@@ -215,32 +204,19 @@ def init(api_key: str, endpoint: Optional[str]):
 
     save_config(config)
 
-    click.echo(f"Config saved to {get_config_path()}")
-    click.echo(f"Device ID: {config['device_id']}")
-
     # Test the connection
-    click.echo("\nTesting connection...")
+    click.echo("Testing connection...")
     try:
         px = Plexus(api_key=api_key)
         px.send("plexus.agent.init", 1, tags={"event": "init"})
-        click.secho("✓ Connected successfully!\n", fg="green")
-        click.echo("You're all set! Try these commands:")
-        click.echo("  plexus send temperature 72.5       # Send a single value")
-        click.echo("  plexus send motor.rpm 3450 -t id=1 # Send with tags")
-        click.echo("  plexus stream sensor_name          # Stream from stdin")
-        click.echo("  plexus status                      # Check connection")
-        click.echo(f"\nEndpoint: {px.endpoint}")
+        click.secho("✓ Connected!", fg="green")
     except AuthenticationError as e:
         click.secho(f"✗ Authentication failed: {e}", fg="red")
-        click.echo("\nCheck that your API key is valid at:")
-        click.echo(f"  {config.get('endpoint', 'https://app.plexusaero.space')}/settings?tab=connections")
+        click.echo("Check your API key at: https://app.plexusaero.space/settings")
         sys.exit(1)
     except PlexusError as e:
         click.secho(f"✗ Connection failed: {e}", fg="yellow")
-        click.echo("\nYour config is saved. Troubleshooting:")
-        click.echo("  • Check your network connection")
-        click.echo("  • Verify the endpoint is correct")
-        click.echo(f"  • Current endpoint: {config.get('endpoint', 'https://app.plexusaero.space')}")
+        sys.exit(1)
 
 
 @main.command()
@@ -248,10 +224,12 @@ def init(api_key: str, endpoint: Optional[str]):
 @click.argument("value", type=float)
 @click.option("--tag", "-t", multiple=True, help="Tag in key=value format")
 @click.option("--timestamp", type=float, help="Unix timestamp (default: now)")
-@click.option("--local", is_flag=True, help="Write to local file instead of cloud")
-def send(metric: str, value: float, tag: tuple, timestamp: Optional[float], local: bool):
+def send(metric: str, value: float, tag: tuple, timestamp: Optional[float]):
     """
     Send a single metric value.
+
+    If a recording is active (started with 'plexus record'),
+    the data is automatically grouped into that recording.
 
     Examples:
 
@@ -260,8 +238,6 @@ def send(metric: str, value: float, tag: tuple, timestamp: Optional[float], loca
         plexus send motor.rpm 3450 -t motor_id=A1
 
         plexus send pressure 1013.25 --timestamp 1699900000
-
-        plexus send temperature 72.5 --local  # No API key needed
     """
     # Parse tags
     tags = {}
@@ -272,26 +248,31 @@ def send(metric: str, value: float, tag: tuple, timestamp: Optional[float], loca
         else:
             click.secho(f"Invalid tag format: {t} (expected key=value)", fg="yellow")
 
+    # Check for active recording
+    config = load_config()
+    active_recording = config.get("active_recording")
+    session_id = active_recording.get("name") if active_recording else None
+
     try:
-        px = Plexus(local=local)
+        px = Plexus()
 
-        # Show mode on first send
-        if px.is_local:
-            click.secho("📁 Local mode (no API key)", fg="yellow", err=True)
-
-        px.send(metric, value, timestamp=timestamp, tags=tags if tags else None)
-
-        if px.is_local:
-            click.secho(f"✓ Saved {metric}={value} → ~/.plexus/data.jsonl", fg="green")
+        # Use recording context if active
+        if session_id:
+            with px.session(session_id):
+                px.send(metric, value, timestamp=timestamp, tags=tags if tags else None)
+            click.secho(f"✓ Sent {metric}={value} [recording: {session_id}]", fg="green")
         else:
+            px.send(metric, value, timestamp=timestamp, tags=tags if tags else None)
             click.secho(f"✓ Sent {metric}={value}", fg="green")
 
         if tags:
             click.echo(f"  Tags: {tags}")
+    except RuntimeError as e:
+        click.secho(f"✗ {e}", fg="red")
+        sys.exit(1)
     except AuthenticationError as e:
         click.secho(f"✗ Authentication error: {e}", fg="red")
-        click.echo("  Run 'plexus init' to configure your API key")
-        click.echo("  Or use --local to save data locally without an account")
+        click.echo("  Run 'plexus login' to connect your account")
         sys.exit(1)
     except PlexusError as e:
         click.secho(f"✗ Error: {e}", fg="red")
@@ -302,13 +283,13 @@ def send(metric: str, value: float, tag: tuple, timestamp: Optional[float], loca
 @click.argument("metric")
 @click.option("--rate", "-r", type=float, default=None, help="Max samples per second")
 @click.option("--tag", "-t", multiple=True, help="Tag in key=value format")
-@click.option("--session", "-s", help="Session ID for grouping data")
-@click.option("--local", is_flag=True, help="Write to local file instead of cloud")
-def stream(metric: str, rate: Optional[float], tag: tuple, session: Optional[str], local: bool):
+@click.option("--session", "-s", help="Session ID for grouping data (overrides active recording)")
+def stream(metric: str, rate: Optional[float], tag: tuple, session: Optional[str]):
     """
     Stream values from stdin.
 
     Reads numeric values from stdin (one per line) and sends them to Plexus.
+    If a recording is active, data is automatically grouped into it.
 
     Examples:
 
@@ -321,8 +302,10 @@ def stream(metric: str, rate: Optional[float], tag: tuple, session: Optional[str
         # With session tracking
         python read_motor.py | plexus stream motor.rpm -s test-001
 
-        # Local mode (no API key needed)
-        python read_sensor.py | plexus stream temperature --local
+        # Works with active recordings
+        plexus record "test-001"
+        python read_sensor.py | plexus stream temperature
+        plexus stop
     """
     # Parse tags
     tags = {}
@@ -335,16 +318,23 @@ def stream(metric: str, rate: Optional[float], tag: tuple, session: Optional[str
     last_send = 0
     count = 0
 
+    # Use explicit session, or fall back to active recording
+    active_session = session
+    if not active_session:
+        config = load_config()
+        active_recording = config.get("active_recording")
+        if active_recording:
+            active_session = active_recording.get("name")
+
     try:
-        px = Plexus(local=local)
+        px = Plexus()
 
-        if px.is_local:
-            click.secho("📁 Local mode (no API key)", fg="yellow", err=True)
-            click.echo(f"Streaming {metric} to ~/.plexus/data.jsonl... (Ctrl+C to stop)", err=True)
+        if active_session:
+            click.echo(f"Streaming {metric} [recording: {active_session}]... (Ctrl+C to stop)", err=True)
         else:
-            click.echo(f"Streaming {metric} to cloud... (Ctrl+C to stop)", err=True)
+            click.echo(f"Streaming {metric}... (Ctrl+C to stop)", err=True)
 
-        context = px.session(session) if session else nullcontext()
+        context = px.session(active_session) if active_session else nullcontext()
         with context:
             for line in sys.stdin:
                 line = line.strip()
@@ -368,18 +358,19 @@ def stream(metric: str, rate: Optional[float], tag: tuple, session: Optional[str
 
                 # Progress indicator every 100 samples
                 if count % 100 == 0:
-                    click.echo(f"{'Saved' if px.is_local else 'Sent'} {count} samples", err=True)
+                    click.echo(f"Sent {count} samples", err=True)
 
     except KeyboardInterrupt:
-        verb = "Saved" if local or not get_api_key() else "Sent"
-        click.echo(f"\nStopped. {verb} {count} samples.", err=True)
+        click.echo(f"\nStopped. Sent {count} samples.", err=True)
+    except RuntimeError as e:
+        click.secho(f"✗ {e}", fg="red")
+        sys.exit(1)
     except AuthenticationError as e:
-        click.secho(f"Authentication error: {e}", fg="red")
-        click.echo("  Run 'plexus init' to configure your API key")
-        click.echo("  Or use --local to save data locally without an account")
+        click.secho(f"✗ Authentication error: {e}", fg="red")
+        click.echo("  Run 'plexus login' to connect your account")
         sys.exit(1)
     except PlexusError as e:
-        click.secho(f"Error: {e}", fg="red")
+        click.secho(f"✗ Error: {e}", fg="red")
         sys.exit(1)
 
 
@@ -415,7 +406,7 @@ def status():
     else:
         click.secho("  API Key:   Not configured", fg="yellow")
         click.echo("─" * 40)
-        click.echo("\n  Run 'plexus init' to set up your API key.\n")
+        click.secho("\n  Not logged in. Run 'plexus login' to connect your account.\n", fg="yellow")
 
 
 @main.command()
@@ -434,68 +425,6 @@ def config():
 
 
 @main.command()
-@click.option("--auto-configure", "-a", is_flag=True, help="Automatically configure if found")
-def discover(auto_configure: bool):
-    """
-    Discover local Plexus instances on your network.
-
-    Useful for self-hosted setups. Checks common local addresses
-    for a running Plexus server.
-
-    Examples:
-
-        # Just discover
-        plexus discover
-
-        # Discover and auto-configure
-        plexus discover --auto-configure
-    """
-    from plexus.config import LOCAL_ENDPOINTS
-
-    click.echo("\nPlexus Discovery")
-    click.echo("─" * 40)
-    click.echo("  Scanning for local instances...")
-
-    found = None
-    for endpoint in LOCAL_ENDPOINTS:
-        click.echo(f"    Checking {endpoint}...", nl=False)
-        try:
-            import requests
-            response = requests.get(
-                f"{endpoint}/api/ingest",
-                timeout=1.0,
-            )
-            if response.status_code in [200, 401, 405]:
-                click.secho(" found!", fg="green")
-                found = endpoint
-                break
-            else:
-                click.secho(" no", fg="yellow")
-        except Exception:
-            click.secho(" no", fg="yellow")
-
-    click.echo("─" * 40)
-
-    if found:
-        click.secho(f"\n  ✓ Found Plexus at: {found}\n", fg="green")
-
-        if auto_configure:
-            config = load_config()
-            config["endpoint"] = found
-            save_config(config)
-            click.echo("  Configuration updated!")
-            click.echo(f"  Now run: plexus login --endpoint {found}")
-        else:
-            click.echo("  To use this instance, run:")
-            click.echo(f"    plexus login --endpoint {found}")
-            click.echo("\n  Or with --auto-configure to save automatically")
-    else:
-        click.secho("\n  No local Plexus instance found.\n", fg="yellow")
-        click.echo("  To self-host, see: https://docs.plexusaero.space/self-host")
-        click.echo("  Or use the cloud: plexus login")
-
-
-@main.command()
 def connect():
     """
     Connect to Plexus for remote terminal access.
@@ -511,7 +440,7 @@ def connect():
 
     api_key = get_api_key()
     if not api_key:
-        click.secho("No API key configured. Run 'plexus init' first.", fg="red")
+        click.secho("Not logged in. Run 'plexus login' to connect your account.", fg="red")
         sys.exit(1)
 
     endpoint = get_endpoint()
@@ -542,7 +471,6 @@ def connect():
 @click.option("--timestamp-format", default="auto", help="Timestamp format (auto, unix, unix_ms, iso)")
 @click.option("--batch-size", "-b", default=100, type=int, help="Batch size for uploads")
 @click.option("--dry-run", is_flag=True, help="Parse file but don't upload")
-@click.option("--local", is_flag=True, help="Write to local file instead of cloud")
 def import_file(
     file: str,
     session: Optional[str],
@@ -550,7 +478,6 @@ def import_file(
     timestamp_format: str,
     batch_size: int,
     dry_run: bool,
-    local: bool,
 ):
     """
     Import data from a CSV file.
@@ -650,14 +577,14 @@ def import_file(
                     click.echo(f"    {ts:.2f}: {metrics}")
                 return
 
-            # Upload/save data
-            px = Plexus(local=local)
+            # Upload data
+            try:
+                px = Plexus()
+            except RuntimeError as e:
+                click.secho(f"\n✗ {e}", fg="red")
+                sys.exit(1)
 
-            if px.is_local:
-                click.secho("\n📁 Local mode (no API key)", fg="yellow")
-                click.echo("  Saving to ~/.plexus/data.jsonl...")
-            else:
-                click.echo("\n  Uploading to cloud...")
+            click.echo("\n  Uploading...")
 
             # Use session context if provided
             context = px.session(session) if session else nullcontext()
@@ -699,15 +626,11 @@ def import_file(
                     uploaded += len(batch)
 
             click.echo("─" * 40)
-            verb = "Saved" if px.is_local else "Uploaded"
-            click.secho(f"  ✓ {verb} {uploaded} data points", fg="green")
+            click.secho(f"  ✓ Uploaded {uploaded} data points", fg="green")
             if errors:
                 click.secho(f"  ⚠ {errors} rows had errors", fg="yellow")
-            if session and not px.is_local:
+            if session:
                 click.echo(f"\n  View session: {get_endpoint()}/sessions/{session}")
-            if px.is_local:
-                click.echo("\n  Data saved to: ~/.plexus/data.jsonl")
-                click.echo("  To upload later, run 'plexus init' and re-import")
 
     except FileNotFoundError:
         click.secho(f"File not found: {file}", fg="red")
@@ -972,6 +895,514 @@ class nullcontext:
         return None
     def __exit__(self, *args):
         return False
+
+
+@main.command("record")
+@click.argument("name", required=False)
+@click.option("--label", "-l", multiple=True, help="Labels for this recording (can repeat)")
+@click.option("--description", "-d", help="Description of the recording")
+def record(name: Optional[str], label: tuple, description: Optional[str]):
+    """
+    Start a new recording session.
+
+    All data sent while recording is grouped together for easy
+    playback, labeling, and export.
+
+    Examples:
+
+        # Start recording with auto-generated name
+        plexus record
+
+        # Start recording with a name
+        plexus record "grasp-attempt-047"
+
+        # Start recording with labels
+        plexus record "test-001" -l success -l indoor
+
+        # Then send data (in another terminal or script)
+        plexus send motor.torque 1.5
+        python my_robot.py | plexus stream robot.state
+
+        # Stop recording
+        plexus stop
+
+    The recording can be labeled, played back, and exported from
+    the Plexus dashboard.
+    """
+    import uuid
+
+    # Generate name if not provided
+    if not name:
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        name = f"recording_{timestamp}"
+
+    # Store recording state in config
+    config = load_config()
+    config["active_recording"] = {
+        "name": name,
+        "labels": list(label),
+        "description": description,
+        "started_at": time.time(),
+    }
+    save_config(config)
+
+    click.echo("\n🔴 Recording Started")
+    click.echo("─" * 40)
+    click.echo(f"  Name: {name}")
+    if label:
+        click.echo(f"  Labels: {', '.join(label)}")
+    if description:
+        click.echo(f"  Description: {description}")
+    click.echo("─" * 40)
+    click.echo("\n  All data sent will be grouped in this recording.")
+    click.echo("  Run 'plexus stop' when finished.\n")
+
+    # Notify API that recording started
+    api_key = get_api_key()
+    if api_key:
+        try:
+            import requests
+            requests.post(
+                f"{get_endpoint()}/api/sessions",
+                headers={"x-api-key": api_key, "Content-Type": "application/json"},
+                json={
+                    "session_id": name,
+                    "device_id": get_device_id(),
+                    "status": "started",
+                    "labels": list(label),
+                    "description": description,
+                    "timestamp": time.time(),
+                },
+                timeout=5,
+            )
+        except Exception:
+            pass  # Recording tracking is best-effort
+
+
+@main.command("stop")
+@click.option("--label", "-l", multiple=True, help="Add labels to the recording")
+@click.option("--notes", "-n", help="Add notes to the recording")
+def stop(label: tuple, notes: Optional[str]):
+    """
+    Stop the current recording.
+
+    Ends the active recording session and optionally adds labels.
+
+    Examples:
+
+        # Stop recording
+        plexus stop
+
+        # Stop and add a label
+        plexus stop -l success
+
+        # Stop with notes
+        plexus stop -n "Good grasp, clean motion"
+    """
+    config = load_config()
+    recording = config.get("active_recording")
+
+    if not recording:
+        click.secho("No active recording to stop.", fg="yellow")
+        click.echo("Start one with: plexus record")
+        return
+
+    name = recording["name"]
+    started_at = recording.get("started_at", time.time())
+    duration = time.time() - started_at
+
+    # Merge labels
+    all_labels = list(recording.get("labels", [])) + list(label)
+
+    # Clear active recording
+    del config["active_recording"]
+    save_config(config)
+
+    click.echo("\n⏹️  Recording Stopped")
+    click.echo("─" * 40)
+    click.echo(f"  Name: {name}")
+    click.echo(f"  Duration: {duration:.1f} seconds")
+    if all_labels:
+        click.echo(f"  Labels: {', '.join(all_labels)}")
+    if notes:
+        click.echo(f"  Notes: {notes}")
+    click.echo("─" * 40)
+
+    # Notify API that recording stopped
+    api_key = get_api_key()
+    if api_key:
+        try:
+            import requests
+            requests.post(
+                f"{get_endpoint()}/api/sessions",
+                headers={"x-api-key": api_key, "Content-Type": "application/json"},
+                json={
+                    "session_id": name,
+                    "device_id": get_device_id(),
+                    "status": "ended",
+                    "labels": all_labels,
+                    "notes": notes,
+                    "duration": duration,
+                    "timestamp": time.time(),
+                },
+                timeout=5,
+            )
+            click.echo(f"\n  View recording: {get_endpoint()}/recordings/{name}\n")
+        except Exception:
+            pass
+
+
+@main.command("recordings")
+@click.option("--limit", "-n", default=10, type=int, help="Number of recordings to show")
+@click.option("--label", "-l", help="Filter by label")
+def recordings(limit: int, label: Optional[str]):
+    """
+    List recent recordings.
+
+    Shows recordings from this device with their labels and duration.
+
+    Examples:
+
+        # Show last 10 recordings
+        plexus recordings
+
+        # Show recordings with a specific label
+        plexus recordings -l success
+
+        # Show more recordings
+        plexus recordings -n 50
+    """
+    api_key = get_api_key()
+    if not api_key:
+        click.secho("Not logged in. Run 'plexus login' first.", fg="yellow")
+        return
+
+    try:
+        import requests
+        params = {"limit": limit, "device_id": get_device_id()}
+        if label:
+            params["label"] = label
+
+        response = requests.get(
+            f"{get_endpoint()}/api/sessions",
+            headers={"x-api-key": api_key},
+            params=params,
+            timeout=10,
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            sessions = data.get("sessions", [])
+
+            if not sessions:
+                click.echo("\nNo recordings found.")
+                click.echo("Start one with: plexus record")
+                return
+
+            click.echo(f"\nRecordings ({len(sessions)})")
+            click.echo("─" * 60)
+
+            for s in sessions:
+                name = s.get("session_id", "unknown")
+                labels = s.get("labels", [])
+                duration = s.get("duration", 0)
+                status = s.get("status", "unknown")
+
+                # Format duration
+                if duration > 3600:
+                    dur_str = f"{duration/3600:.1f}h"
+                elif duration > 60:
+                    dur_str = f"{duration/60:.1f}m"
+                else:
+                    dur_str = f"{duration:.0f}s"
+
+                # Status icon
+                icon = "🔴" if status == "started" else "✓"
+
+                click.echo(f"  {icon} {name} ({dur_str})")
+                if labels:
+                    click.echo(f"     Labels: {', '.join(labels)}")
+
+            click.echo("─" * 60)
+            click.echo(f"\n  View all: {get_endpoint()}/recordings\n")
+
+        elif response.status_code == 401:
+            click.secho("Authentication failed. Run 'plexus login' again.", fg="red")
+        else:
+            click.secho(f"Error: {response.text}", fg="red")
+
+    except requests.exceptions.ConnectionError:
+        click.secho("Could not connect to Plexus.", fg="red")
+    except Exception as e:
+        click.secho(f"Error: {e}", fg="red")
+
+
+@main.command("import-bag")
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--session", "-s", help="Session ID to group imported data")
+@click.option("--topic", "-t", multiple=True, help="Specific topics to import (can repeat)")
+@click.option("--skip-images", is_flag=True, help="Skip image/video topics")
+@click.option("--extract-video", is_flag=True, help="Extract video frames to disk")
+@click.option("--video-dir", default=None, help="Directory for extracted video frames")
+@click.option("--dry-run", is_flag=True, help="Detect schema without importing")
+@click.option("--batch-size", "-b", default=100, type=int, help="Batch size for uploads")
+def import_bag(
+    file: str,
+    session: Optional[str],
+    topic: tuple,
+    skip_images: bool,
+    extract_video: bool,
+    video_dir: Optional[str],
+    dry_run: bool,
+    batch_size: int,
+):
+    """
+    Import data from a ROS bag file.
+
+    Supports ROS1 bags (.bag), ROS2 bags (.db3), and MCAP files (.mcap).
+    Automatically detects bag format and extracts schema.
+
+    Examples:
+
+        # Basic import
+        plexus import-bag robot_data.bag
+
+        # With session grouping
+        plexus import-bag flight.bag -s "flight-001"
+
+        # Import specific topics only
+        plexus import-bag data.bag -t /imu/data -t /joint_states
+
+        # Preview without uploading
+        plexus import-bag data.bag --dry-run
+
+        # Extract video frames
+        plexus import-bag data.bag --extract-video --video-dir ./frames
+
+    Requires: pip install plexus-agent[ros]
+    """
+    try:
+        from plexus.importers.rosbag import RosbagImporter
+    except ImportError:
+        click.secho("ROS bag support not installed. Run:", fg="red")
+        click.echo("  pip install plexus-agent[ros]")
+        sys.exit(1)
+
+    filepath = Path(file)
+    topics_filter = list(topic) if topic else None
+
+    click.echo(f"\nImporting ROS bag: {filepath.name}")
+    click.echo("─" * 50)
+
+    try:
+        importer = RosbagImporter(
+            filepath,
+            topics=topics_filter,
+            skip_images=skip_images,
+        )
+
+        # Detect schema
+        click.echo("  Detecting schema...")
+        schema = importer.detect_schema()
+
+        click.echo(f"  Bag type:      {schema.bag_type.upper()}")
+        click.echo(f"  Duration:      {schema.duration_sec:.2f} seconds")
+        click.echo(f"  Total messages: {schema.message_count:,}")
+        click.echo(f"  Topics found:  {len(schema.topics)}")
+
+        # Show topics
+        click.echo("\n  Topics:")
+        for t in schema.topics[:10]:  # Show first 10
+            icon = "🎥" if t.is_image else "📊"
+            click.echo(f"    {icon} {t.name}")
+            click.echo(f"       → {t.plexus_name} ({t.message_count:,} msgs, {t.frequency_hz:.1f} Hz)")
+
+        if len(schema.topics) > 10:
+            click.echo(f"    ... and {len(schema.topics) - 10} more topics")
+
+        click.echo("─" * 50)
+
+        if dry_run:
+            click.secho("\n  --dry-run: No data uploaded", fg="yellow")
+
+            # Show schema summary
+            click.echo("\n  Schema summary (JSON):")
+            import json
+            click.echo(json.dumps(schema.to_dict(), indent=2)[:1000])
+            if len(json.dumps(schema.to_dict())) > 1000:
+                click.echo("  ... (truncated)")
+            return
+
+        # Upload telemetry
+        click.echo("\n  Uploading telemetry...")
+
+        try:
+            px = Plexus()
+        except RuntimeError as e:
+            click.secho(f"\n✗ {e}", fg="red")
+            sys.exit(1)
+
+        uploaded = [0]
+        total = schema.message_count
+
+        def progress(count, total):
+            uploaded[0] = count
+            pct = (count / total * 100) if total > 0 else 0
+            click.echo(f"\r  Progress: {count:,} / {total:,} ({pct:.1f}%)", nl=False)
+
+        stats = importer.upload_to_plexus(
+            px,
+            session_id=session,
+            batch_size=batch_size,
+            progress_callback=progress,
+        )
+
+        click.echo("")  # New line after progress
+        click.echo("─" * 50)
+
+        click.secho(f"  ✓ Uploaded {stats['metrics_uploaded']:,} metrics", fg="green")
+
+        if stats.get("errors"):
+            click.secho(f"  ⚠ {stats['errors']} errors occurred", fg="yellow")
+
+        if session:
+            click.echo(f"\n  View session: {get_endpoint()}/sessions/{session}")
+
+        # Extract video if requested
+        if extract_video and schema.image_topics:
+            click.echo("\n  Extracting video frames...")
+
+            video_output = video_dir or f"./frames_{filepath.stem}"
+            video_stats = importer.extract_images(video_output)
+
+            click.secho(
+                f"  ✓ Extracted {video_stats['frames_extracted']:,} frames → {video_output}",
+                fg="green"
+            )
+
+        elif extract_video and not schema.image_topics:
+            click.secho("  No image topics found in bag", fg="yellow")
+
+    except FileNotFoundError:
+        click.secho(f"File not found: {file}", fg="red")
+        sys.exit(1)
+    except ImportError as e:
+        click.secho(f"Missing dependency: {e}", fg="red")
+        click.echo("  Try: pip install plexus-agent[ros]")
+        sys.exit(1)
+    except Exception as e:
+        click.secho(f"Error: {e}", fg="red")
+        sys.exit(1)
+
+
+@main.command("schema")
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--format", "-f", type=click.Choice(["text", "json", "yaml"]), default="text")
+@click.option("--output", "-o", type=click.Path(), help="Write schema to file")
+def schema_cmd(file: str, format: str, output: Optional[str]):
+    """
+    Detect and display schema from a ROS bag or data file.
+
+    Useful for understanding what data is in a bag before importing.
+
+    Examples:
+
+        # Show schema as text
+        plexus schema robot_data.bag
+
+        # Export as JSON
+        plexus schema data.bag -f json -o schema.json
+
+    Requires: pip install plexus-agent[ros]
+    """
+    filepath = Path(file)
+    suffix = filepath.suffix.lower()
+
+    if suffix in [".bag", ".mcap", ".db3"] or filepath.is_dir():
+        # ROS bag
+        try:
+            from plexus.importers.rosbag import RosbagImporter
+        except ImportError:
+            click.secho("ROS bag support not installed. Run:", fg="red")
+            click.echo("  pip install plexus-agent[ros]")
+            sys.exit(1)
+
+        try:
+            importer = RosbagImporter(filepath)
+            schema = importer.detect_schema()
+            schema_dict = schema.to_dict()
+        except Exception as e:
+            click.secho(f"Error reading bag: {e}", fg="red")
+            sys.exit(1)
+
+    elif suffix in [".csv", ".tsv"]:
+        # CSV file - detect columns as schema
+        delimiter = "\t" if suffix == ".tsv" else ","
+        try:
+            with open(filepath, "r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f, delimiter=delimiter)
+                headers = reader.fieldnames or []
+                row_count = sum(1 for _ in reader)
+
+            schema_dict = {
+                "file_path": str(filepath),
+                "file_type": "csv" if suffix == ".csv" else "tsv",
+                "columns": headers,
+                "row_count": row_count,
+            }
+        except Exception as e:
+            click.secho(f"Error reading file: {e}", fg="red")
+            sys.exit(1)
+
+    else:
+        click.secho(f"Unsupported file type: {suffix}", fg="red")
+        click.echo("Supported: .bag, .mcap, .db3, .csv, .tsv")
+        sys.exit(1)
+
+    # Format output
+    if format == "json":
+        import json
+        output_str = json.dumps(schema_dict, indent=2)
+    elif format == "yaml":
+        try:
+            import yaml
+            output_str = yaml.dump(schema_dict, default_flow_style=False)
+        except ImportError:
+            click.secho("YAML output requires PyYAML: pip install pyyaml", fg="red")
+            sys.exit(1)
+    else:
+        # Text format
+        lines = [f"\nSchema: {filepath.name}", "─" * 50]
+
+        if "bag_type" in schema_dict:
+            lines.append(f"  Type:     {schema_dict['bag_type'].upper()} bag")
+            lines.append(f"  Duration: {schema_dict['duration_sec']:.2f}s")
+            lines.append(f"  Messages: {schema_dict['message_count']:,}")
+            lines.append(f"\n  Topics ({len(schema_dict['topics'])}):")
+
+            for t in schema_dict["topics"]:
+                icon = "🎥" if t["is_image"] else "📊"
+                lines.append(f"    {icon} {t['name']}")
+                lines.append(f"       Type: {t['message_type']}")
+                lines.append(f"       → {t['plexus_name']}")
+                lines.append(f"       {t['message_count']:,} msgs @ {t['frequency_hz']:.1f} Hz")
+        else:
+            lines.append(f"  Type:    {schema_dict.get('file_type', 'unknown')}")
+            lines.append(f"  Rows:    {schema_dict.get('row_count', 'unknown'):,}")
+            lines.append(f"\n  Columns ({len(schema_dict.get('columns', []))}):")
+            for col in schema_dict.get("columns", []):
+                lines.append(f"    📊 {col}")
+
+        output_str = "\n".join(lines)
+
+    # Output
+    if output:
+        with open(output, "w") as f:
+            f.write(output_str)
+        click.echo(f"Schema written to: {output}")
+    else:
+        click.echo(output_str)
 
 
 if __name__ == "__main__":
