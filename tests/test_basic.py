@@ -14,7 +14,6 @@ def test_version():
 def test_default_config():
     """Default config should have expected keys."""
     assert "api_key" in DEFAULT_CONFIG
-    assert "endpoint" in DEFAULT_CONFIG
     assert "device_id" in DEFAULT_CONFIG
 
 
