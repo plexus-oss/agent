@@ -140,7 +140,9 @@ class MPU6050(BaseSensor):
             bus = SMBus(self.bus_num)
             who_am_i = bus.read_byte_data(self.address, WHO_AM_I)
             bus.close()
-            return who_am_i == 0x68
+            # Accept various MPU variants:
+            # 0x68 = MPU6050, 0x70 = MPU6500, 0x71 = MPU9250, 0x73 = MPU9255
+            return who_am_i in (0x68, 0x70, 0x71, 0x73)
         except Exception:
             return False
 
