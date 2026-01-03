@@ -1,6 +1,6 @@
 # Plexus Agent
 
-Send sensor data to [Plexus](https://app.plexusaero.space) in 3 commands.
+Send sensor data to [Plexus](https://app.plexus.company) in 3 commands.
 
 ## Quick Start
 
@@ -10,7 +10,7 @@ plexus login
 plexus send temperature 72.5
 ```
 
-View your data at [app.plexusaero.space](https://app.plexusaero.space)
+View your data at [app.plexus.company](https://app.plexus.company)
 
 Works on Raspberry Pi, servers, laptops, containers - anything with Python.
 
@@ -58,13 +58,13 @@ with px.session("motor-test-001"):
 
 ## CLI Reference
 
-| Command | Description |
-|---------|-------------|
-| `plexus login` | Sign in via browser |
-| `plexus send <metric> <value>` | Send a value |
-| `plexus stream <metric>` | Stream from stdin |
-| `plexus import <file>` | Import CSV/TSV file |
-| `plexus status` | Check connection |
+| Command                        | Description         |
+| ------------------------------ | ------------------- |
+| `plexus login`                 | Sign in via browser |
+| `plexus send <metric> <value>` | Send a value        |
+| `plexus stream <metric>`       | Stream from stdin   |
+| `plexus import <file>`         | Import CSV/TSV file |
+| `plexus status`                | Check connection    |
 
 ### Import CSV
 
@@ -120,7 +120,7 @@ while True:
 Send data with any HTTP client:
 
 ```bash
-curl -X POST https://app.plexusaero.space/api/ingest \
+curl -X POST https://app.plexus.company/api/ingest \
   -H "x-api-key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"points": [{"metric": "temperature", "value": 72.5}]}'

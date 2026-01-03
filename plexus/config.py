@@ -12,7 +12,7 @@ from typing import Optional
 CONFIG_DIR = Path.home() / ".plexus"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
-PLEXUS_ENDPOINT = "https://app.plexusaero.space"
+PLEXUS_ENDPOINT = "https://app.plexus.company"
 
 DEFAULT_CONFIG = {
     "api_key": None,

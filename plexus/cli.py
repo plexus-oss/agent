@@ -65,7 +65,7 @@ def login(no_browser: bool):
     """
     import webbrowser
 
-    base_endpoint = "https://app.plexusaero.space"
+    base_endpoint = "https://app.plexus.company"
 
     click.echo("\nPlexus Login")
     click.echo("─" * 40)
@@ -152,7 +152,7 @@ def login(no_browser: bool):
                     click.echo("\n  You're all set! Try:")
                     click.echo("    plexus send temperature 72.5")
                     click.echo("\n  View your data at:")
-                    click.echo("    https://app.plexusaero.space")
+                    click.echo("    https://app.plexus.company")
                     return
 
             elif poll_response.status_code == 202:
@@ -191,7 +191,7 @@ def init(api_key: str):
     Set up Plexus with an API key (for CI/CD environments).
 
     For interactive use, 'plexus login' is easier.
-    Get your API key from https://app.plexusaero.space/settings
+    Get your API key from https://app.plexus.company/settings
     """
     config = load_config()
     config["api_key"] = api_key.strip()
@@ -211,7 +211,7 @@ def init(api_key: str):
         click.secho("✓ Connected!", fg="green")
     except AuthenticationError as e:
         click.secho(f"✗ Authentication failed: {e}", fg="red")
-        click.echo("Check your API key at: https://app.plexusaero.space/settings")
+        click.echo("Check your API key at: https://app.plexus.company/settings")
         sys.exit(1)
     except PlexusError as e:
         click.secho(f"✗ Connection failed: {e}", fg="yellow")

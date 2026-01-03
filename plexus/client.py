@@ -64,7 +64,7 @@ class Plexus:
     Args:
         api_key: Your Plexus API key. If not provided, reads from
                  PLEXUS_API_KEY env var or ~/.plexus/config.json
-        endpoint: API endpoint URL. Defaults to https://app.plexusaero.space
+        endpoint: API endpoint URL. Defaults to https://app.plexus.company
         device_id: Unique identifier for this device. Auto-generated if not provided.
         timeout: Request timeout in seconds. Default 10s.
 

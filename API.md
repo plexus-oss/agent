@@ -5,7 +5,7 @@ Send telemetry data to Plexus using any HTTP client. No SDK required.
 ## Quick Start
 
 ```bash
-curl -X POST https://app.plexusaero.space/api/ingest \
+curl -X POST https://app.plexus.company/api/ingest \
   -H "x-api-key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -22,7 +22,7 @@ curl -X POST https://app.plexusaero.space/api/ingest \
 
 **Plexus Cloud:**
 
-1. Sign up at [app.plexusaero.space](https://app.plexusaero.space)
+1. Sign up at [app.plexus.company](https://app.plexus.company)
 2. Go to Settings → Connections
 3. Create an API key (starts with `plx_`)
 
@@ -115,7 +115,7 @@ POST /api/sessions
 API_KEY="plx_xxxxx"
 DEVICE_ID="sensor-001"
 
-curl -X POST https://app.plexusaero.space/api/ingest \
+curl -X POST https://app.plexus.company/api/ingest \
   -H "x-api-key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d "{
@@ -134,7 +134,7 @@ curl -X POST https://app.plexusaero.space/api/ingest \
 const API_KEY = "plx_xxxxx";
 const DEVICE_ID = "sensor-001";
 
-await fetch("https://app.plexusaero.space/api/ingest", {
+await fetch("https://app.plexus.company/api/ingest", {
   method: "POST",
   headers: {
     "x-api-key": API_KEY,
@@ -176,7 +176,7 @@ func main() {
     }
 
     body, _ := json.Marshal(points)
-    req, _ := http.NewRequest("POST", "https://app.plexusaero.space/api/ingest", bytes.NewBuffer(body))
+    req, _ := http.NewRequest("POST", "https://app.plexus.company/api/ingest", bytes.NewBuffer(body))
     req.Header.Set("x-api-key", "plx_xxxxx")
     req.Header.Set("Content-Type", "application/json")
 
@@ -191,7 +191,7 @@ import requests
 import time
 
 requests.post(
-    "https://app.plexusaero.space/api/ingest",
+    "https://app.plexus.company/api/ingest",
     headers={"x-api-key": "plx_xxxxx"},
     json={
         "points": [{
@@ -212,7 +212,7 @@ requests.post(
 
 void sendToPlexus(const char* metric, float value) {
     HTTPClient http;
-    http.begin("https://app.plexusaero.space/api/ingest");
+    http.begin("https://app.plexus.company/api/ingest");
     http.addHeader("Content-Type", "application/json");
     http.addHeader("x-api-key", "plx_xxxxx");
 
