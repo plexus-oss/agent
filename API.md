@@ -26,13 +26,6 @@ curl -X POST https://app.plexus.company/api/ingest \
 2. Go to Settings → Connections
 3. Create an API key (starts with `plx_`)
 
-**Self-Hosted:**
-
-- Default key: `plx_selfhost_default_key_12345678` (change in production)
-- Or create via the dashboard at `http://your-server:3000/settings`
-
-Once you have a key, you can use raw HTTP from any language - no SDK needed.
-
 ## Endpoints
 
 | Endpoint        | Method | Description                  |
@@ -70,11 +63,35 @@ x-api-key: plx_xxxxx
 | Field        | Type   | Required | Description                                    |
 | ------------ | ------ | -------- | ---------------------------------------------- |
 | `metric`     | string | Yes      | Metric name (e.g., `temperature`, `motor.rpm`) |
-| `value`      | number | Yes      | Numeric value                                  |
-| `timestamp`  | float  | Yes      | Unix timestamp (seconds, decimals OK)          |
+| `value`      | any    | Yes      | See supported value types below                |
+| `timestamp`  | float  | No       | Unix timestamp (seconds). Defaults to now      |
 | `device_id`  | string | Yes      | Your device identifier                         |
 | `tags`       | object | No       | Key-value labels                               |
 | `session_id` | string | No       | Group data into sessions                       |
+
+### Supported Value Types
+
+Plexus accepts multiple value types to support diverse sensor data:
+
+| Type    | Example                           | Use Case                          |
+| ------- | --------------------------------- | --------------------------------- |
+| number  | `72.5`, `-40`, `3.14159`          | Numeric readings (most common)    |
+| string  | `"error"`, `"idle"`, `"running"`  | Status, state, labels             |
+| boolean | `true`, `false`                   | On/off, enabled/disabled          |
+| object  | `{"x": 1.2, "y": 3.4, "z": 5.6}`  | Vector data, structured readings  |
+| array   | `[1.0, 2.0, 3.0, 4.0]`            | Waveforms, multiple values        |
+
+```json
+{
+  "points": [
+    { "metric": "temperature", "value": 72.5, "device_id": "pi-001" },
+    { "metric": "motor_state", "value": "running", "device_id": "pi-001" },
+    { "metric": "armed", "value": true, "device_id": "pi-001" },
+    { "metric": "accel", "value": {"x": 0.1, "y": 0.2, "z": 9.8}, "device_id": "pi-001" },
+    { "metric": "fft_bins", "value": [0.1, 0.5, 0.8, 0.3], "device_id": "pi-001" }
+  ]
+}
+```
 
 **Response:** `200 OK` on success
 
@@ -254,17 +271,93 @@ curl -X POST http://your-server:3000/api/ingest \
 - **Consistent device_id** - Use the same ID for each physical device
 - **Use tags** - Label data for filtering (e.g., `{"location": "lab", "unit": "celsius"}`)
 
+## Python SDK with Sensor Drivers
+
+The Python SDK includes pre-built drivers for common sensors. Zero configuration required.
+
+### Quick Start (Raspberry Pi)
+
+```bash
+pip install plexus-agent[sensors]
+plexus login
+plexus run  # Auto-detects and streams all connected sensors
+```
+
+### Supported Sensors
+
+| Sensor  | Type        | Metrics                                              | I2C Address |
+| ------- | ----------- | ---------------------------------------------------- | ----------- |
+| MPU6050 | 6-axis IMU  | `accel_x`, `accel_y`, `accel_z`, `gyro_x`, `gyro_y`, `gyro_z` | 0x68, 0x69 |
+| MPU9250 | 9-axis IMU  | `accel_x`, `accel_y`, `accel_z`, `gyro_x`, `gyro_y`, `gyro_z` | 0x68       |
+| BME280  | Environment | `temperature`, `humidity`, `pressure`                | 0x76, 0x77 |
+
+### CLI Commands
+
+```bash
+plexus sensors        # List all supported sensors and their metrics
+plexus scan           # Detect sensors connected to your device
+plexus run            # Stream all detected sensors to Plexus
+plexus run --rate 50  # Override sample rate (Hz)
+```
+
+### Python API
+
+```python
+from plexus import Plexus
+from plexus.sensors import SensorHub, MPU6050, BME280
+
+# Manual setup
+hub = SensorHub()
+hub.add(MPU6050(sample_rate=100))  # 100 Hz for IMU
+hub.add(BME280(sample_rate=1))     # 1 Hz for environmental
+hub.run(Plexus())
+```
+
+### Auto-Detection
+
+```python
+from plexus import Plexus
+from plexus.sensors import auto_sensors
+
+hub = auto_sensors()  # Scans I2C bus, creates drivers
+hub.run(Plexus())     # Streams everything
+```
+
+### Custom Sensors
+
+Extend `BaseSensor` to add your own:
+
+```python
+from plexus.sensors import BaseSensor, SensorReading
+
+class MySensor(BaseSensor):
+    name = "MySensor"
+    metrics = ["voltage", "current"]
+
+    def read(self):
+        return [
+            SensorReading("voltage", read_adc(0) * 3.3),
+            SensorReading("current", read_adc(1) * 0.1),
+        ]
+
+hub = SensorHub()
+hub.add(MySensor(sample_rate=10))
+hub.run(Plexus())
+```
+
 ## Why use the Python SDK?
 
 The SDK adds convenience but isn't required:
 
-| Feature     | Raw HTTP         | Python SDK              |
-| ----------- | ---------------- | ----------------------- |
-| Send data   | Manual JSON      | `px.send("temp", 72.5)` |
-| Sessions    | Manual start/end | `with px.session():`    |
-| Auth setup  | Manual header    | `plexus login`          |
-| Batching    | Manual           | `px.send_batch([...])`  |
-| MQTT bridge | Not available    | `plexus mqtt-bridge`    |
+| Feature        | Raw HTTP         | Python SDK              |
+| -------------- | ---------------- | ----------------------- |
+| Send data      | Manual JSON      | `px.send("temp", 72.5)` |
+| Sessions       | Manual start/end | `with px.session():`    |
+| Auth setup     | Manual header    | `plexus login`          |
+| Batching       | Manual           | `px.send_batch([...])`  |
+| MQTT bridge    | Not available    | `plexus mqtt-bridge`    |
+| Sensor drivers | Not available    | `plexus run`            |
+| Auto-detect    | Not available    | `plexus scan`           |
 
 Use raw HTTP when:
 

@@ -1401,5 +1401,184 @@ def schema_cmd(file: str, format: str, output: Optional[str]):
         click.echo(output_str)
 
 
+@main.command("scan")
+@click.option("--bus", "-b", default=1, type=int, help="I2C bus number")
+@click.option("--all", "-a", "show_all", is_flag=True, help="Show all I2C addresses, not just known sensors")
+def scan_cmd(bus: int, show_all: bool):
+    """
+    Scan for connected sensors.
+
+    Detects sensors on the I2C bus and shows what's available.
+
+    Examples:
+
+        # Scan for known sensors
+        plexus scan
+
+        # Scan a different I2C bus
+        plexus scan -b 0
+
+        # Show all I2C addresses
+        plexus scan --all
+    """
+    try:
+        from plexus.sensors import scan_sensors, scan_i2c, get_sensor_info
+    except ImportError as e:
+        click.secho(f"Sensor support not available: {e}", fg="red")
+        click.echo("Install with: pip install smbus2")
+        sys.exit(1)
+
+    click.echo(f"\nScanning I2C bus {bus}...")
+    click.echo("─" * 40)
+
+    if show_all:
+        # Show all I2C addresses
+        try:
+            addresses = scan_i2c(bus)
+            if addresses:
+                click.echo(f"  Found {len(addresses)} I2C devices:\n")
+                for addr in addresses:
+                    click.echo(f"    0x{addr:02X}")
+            else:
+                click.secho("  No I2C devices found", fg="yellow")
+        except Exception as e:
+            click.secho(f"  Error scanning: {e}", fg="red")
+        return
+
+    # Scan for known sensors
+    try:
+        sensors = scan_sensors(bus)
+
+        if sensors:
+            click.secho(f"  Found {len(sensors)} sensor(s):\n", fg="green")
+            for s in sensors:
+                click.echo(f"  📊 {s.name}")
+                click.echo(f"     Address: 0x{s.address:02X}")
+                click.echo(f"     {s.description}")
+                click.echo("")
+        else:
+            click.secho("  No known sensors detected", fg="yellow")
+            click.echo("\n  Try 'plexus scan --all' to see all I2C addresses")
+            click.echo("  Supported sensors:")
+            for name, info in get_sensor_info().items():
+                click.echo(f"    - {name}: {info['description']}")
+
+    except Exception as e:
+        click.secho(f"  Error: {e}", fg="red")
+        click.echo("\n  Make sure I2C is enabled:")
+        click.echo("    sudo raspi-config  # Interface Options → I2C")
+
+
+@main.command("sensors")
+def sensors_cmd():
+    """
+    List supported sensors.
+
+    Shows all sensor drivers available in plexus-agent.
+    """
+    try:
+        from plexus.sensors import get_sensor_info
+    except ImportError:
+        click.secho("Sensor support requires: pip install smbus2", fg="yellow")
+        return
+
+    click.echo("\nSupported Sensors")
+    click.echo("─" * 40)
+
+    for name, info in get_sensor_info().items():
+        click.echo(f"\n  {name}")
+        click.echo(f"    {info['description']}")
+        click.echo(f"    Metrics: {', '.join(info['metrics'])}")
+        click.echo(f"    I2C addresses: {', '.join(info['i2c_addresses'])}")
+
+
+@main.command("run")
+@click.option("--bus", "-b", default=1, type=int, help="I2C bus number")
+@click.option("--rate", "-r", type=float, help="Sample rate in Hz (default: sensor-specific)")
+@click.option("--session", "-s", help="Session ID for grouping data")
+@click.option("--prefix", "-p", default="", help="Prefix for metric names")
+def run_cmd(bus: int, rate: Optional[float], session: Optional[str], prefix: str):
+    """
+    Run sensor streaming daemon.
+
+    Auto-detects connected sensors and streams data to Plexus.
+    Runs until Ctrl+C is pressed.
+
+    Examples:
+
+        # Auto-detect and stream all sensors
+        plexus run
+
+        # Stream at specific rate
+        plexus run -r 50
+
+        # Stream with session grouping
+        plexus run -s "test-001"
+
+        # Add prefix to metrics
+        plexus run -p "robot1."
+    """
+    try:
+        from plexus.sensors import auto_sensors, scan_sensors
+    except ImportError as e:
+        click.secho(f"Sensor support not available: {e}", fg="red")
+        click.echo("Install with: pip install smbus2")
+        sys.exit(1)
+
+    # Check for sensors first
+    sensors = scan_sensors(bus)
+    if not sensors:
+        click.secho("No sensors detected!", fg="red")
+        click.echo("\nRun 'plexus scan' to check for connected sensors.")
+        click.echo("Make sure I2C is enabled: sudo raspi-config")
+        sys.exit(1)
+
+    # Create sensor hub
+    hub = auto_sensors(bus=bus, sample_rate=rate, prefix=prefix)
+
+    click.echo("\nPlexus Sensor Streaming")
+    click.echo("─" * 40)
+    click.echo(f"  Sensors: {len(sensors)}")
+    for s in sensors:
+        rate_str = f"{rate} Hz" if rate else "default"
+        click.echo(f"    - {s.name} @ 0x{s.address:02X} ({rate_str})")
+    if session:
+        click.echo(f"  Session: {session}")
+    click.echo("─" * 40)
+    click.echo("\n  Streaming... (Ctrl+C to stop)\n")
+
+    # Set up callbacks
+    count = [0]
+
+    def on_reading(reading):
+        count[0] += 1
+        if count[0] % 100 == 0:
+            click.echo(f"  Sent {count[0]} readings", err=True)
+
+    def on_error(sensor, error):
+        click.secho(f"  Error from {sensor.name}: {error}", fg="red", err=True)
+
+    hub.on_reading(on_reading)
+    hub.on_error(on_error)
+
+    # Check auth
+    api_key = get_api_key()
+    if not api_key:
+        click.secho("Not logged in. Run 'plexus login' first.", fg="red")
+        sys.exit(1)
+
+    try:
+        px = Plexus()
+        hub.run(px, session_id=session)
+    except KeyboardInterrupt:
+        click.echo(f"\n  Stopped. Sent {count[0]} readings total.")
+    except AuthenticationError as e:
+        click.secho(f"\n  Auth error: {e}", fg="red")
+        sys.exit(1)
+    except PlexusError as e:
+        click.secho(f"\n  Error: {e}", fg="red")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     main()
