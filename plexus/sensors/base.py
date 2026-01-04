@@ -217,20 +217,34 @@ class SensorHub:
                         if now - last_read[sensor_id] >= interval:
                             try:
                                 readings = sensor.read()
+
+                                # Batch all readings from this sensor together
+                                # This sends one HTTP request with all metrics, enabling
+                                # instant streaming updates in the frontend
+                                batch_points = []
+                                batch_timestamp = None
+                                batch_tags = None
+
                                 for reading in readings:
-                                    # Apply prefix and tags
                                     metric = sensor.get_prefixed_metric(reading.metric)
                                     tags = {**sensor.tags, **reading.tags}
+                                    batch_points.append((metric, reading.value))
 
-                                    client.send(
-                                        metric,
-                                        reading.value,
-                                        timestamp=reading.timestamp,
-                                        tags=tags if tags else None,
-                                    )
+                                    # Use first reading's timestamp and merge tags
+                                    if batch_timestamp is None:
+                                        batch_timestamp = reading.timestamp
+                                        batch_tags = tags if tags else None
 
                                     if self._on_reading:
                                         self._on_reading(reading)
+
+                                # Send all readings in one request
+                                if batch_points:
+                                    client.send_batch(
+                                        batch_points,
+                                        timestamp=batch_timestamp,
+                                        tags=batch_tags,
+                                    )
 
                                 last_read[sensor_id] = now
 
