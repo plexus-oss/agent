@@ -1,59 +1,172 @@
 # Plexus Agent
 
-Send sensor data to [Plexus](https://app.plexus.company) in 3 commands.
+Connect your hardware to [Plexus](https://app.plexus.company) and control everything from the web dashboard.
 
 ## Quick Start
 
+### One-Line Setup (Recommended)
+
+From your Plexus dashboard, click **"Pair Device"** to get a pairing code, then run:
+
 ```bash
-pip install plexus-agent
-plexus login
-plexus send temperature 72.5
+curl -sL https://app.plexus.company/setup | bash -s -- --code YOUR_CODE
 ```
 
-View your data at [app.plexus.company](https://app.plexus.company)
+This installs the agent, pairs your device, and sets up auto-start on boot.
 
-Works on Raspberry Pi, servers, laptops, containers - anything with Python.
-
-## Plug & Play Sensors (Raspberry Pi)
-
-Auto-detect and stream all connected I2C sensors:
+### Manual Setup
 
 ```bash
 pip install plexus-agent[sensors]
-plexus login
-plexus scan   # See what's connected
-plexus run    # Stream everything
+plexus pair --code YOUR_CODE
+plexus run
 ```
 
-Supported sensors:
+View and control your device at [app.plexus.company/fleet](https://app.plexus.company/fleet)
 
-| Sensor  | Type        | Metrics                         |
-| ------- | ----------- | ------------------------------- |
-| MPU6050 | 6-axis IMU  | accel_x/y/z, gyro_x/y/z         |
-| MPU9250 | 9-axis IMU  | accel_x/y/z, gyro_x/y/z         |
-| BME280  | Environment | temperature, humidity, pressure |
+## How It Works
 
-Or use the Python API:
-
-```python
-from plexus import Plexus
-from plexus.sensors import auto_sensors
-
-hub = auto_sensors()  # Auto-detect all sensors
-hub.run(Plexus())     # Stream to Plexus
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         PLEXUS DASHBOARD                             │
+│                                                                      │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │
+│  │ Start/Stop  │  │  Recording  │  │   Sensor    │  │    Quick    │ │
+│  │  Streaming  │  │   Sessions  │  │   Config    │  │   Actions   │ │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘ │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              │ WebSocket
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                         YOUR DEVICE                                  │
+│                                                                      │
+│   $ plexus run                                                       │
+│   ✓ Connected to Plexus                                              │
+│   ✓ 3 sensors detected (MPU6050, BME280, BH1750)                    │
+│   ✓ Waiting for commands...                                          │
+│                                                                      │
+│   [Sensors] ──► [Agent] ◄──► [Dashboard]                            │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Sending Data
+**No terminal interaction needed after setup.** All control happens from the web UI:
 
-### Command Line
+- Start/stop live sensor streaming
+- Record data to sessions
+- Configure sensor sample rates
+- Run diagnostics, view logs, reboot device
+
+## CLI Reference
+
+The agent has just 4 commands:
+
+| Command         | Description                              |
+| --------------- | ---------------------------------------- |
+| `plexus run`    | Start agent daemon (main command)        |
+| `plexus pair`   | Pair device with your Plexus account     |
+| `plexus status` | Show connection and sensor status        |
+| `plexus scan`   | Detect connected sensors                 |
+
+### plexus run
+
+Start the agent in daemon mode. Connects to Plexus and waits for commands from the dashboard.
 
 ```bash
-plexus send temperature 72.5
-plexus send motor.rpm 3450 -t motor_id=A1
-python read_sensor.py | plexus stream temperature
+plexus run                    # Start with auto-detected sensors
+plexus run --name "Robot Arm" # Set a device name
+plexus run --no-sensors       # Disable sensor auto-detection
 ```
 
-### Python SDK
+### plexus pair
+
+Pair this device with your Plexus account using a code from the dashboard.
+
+```bash
+plexus pair --code ABC123     # Pair with code from dashboard
+plexus pair                   # Interactive OAuth flow
+```
+
+### plexus status
+
+Show current connection status and detected sensors.
+
+```bash
+plexus status
+# Device ID: pi-living-room
+# Status: Connected
+# Sensors: MPU6050 (100Hz), BME280 (1Hz)
+```
+
+### plexus scan
+
+Scan for connected I2C sensors.
+
+```bash
+plexus scan
+# Found sensors:
+#   MPU6050 at 0x68 - 6-axis IMU (accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z)
+#   BME280 at 0x76 - Environment (temperature, humidity, pressure)
+```
+
+## Supported Sensors
+
+Auto-detected I2C sensors:
+
+| Sensor  | Type        | Metrics                         | I2C Address |
+| ------- | ----------- | ------------------------------- | ----------- |
+| MPU6050 | 6-axis IMU  | accel_x/y/z, gyro_x/y/z         | 0x68, 0x69  |
+| MPU9250 | 9-axis IMU  | accel_x/y/z, gyro_x/y/z         | 0x68        |
+| BME280  | Environment | temperature, humidity, pressure | 0x76, 0x77  |
+
+## Custom Sensors
+
+Add your own sensors using the Python API:
+
+```python
+from plexus.sensors import BaseSensor, SensorReading, SensorHub
+
+class VoltageSensor(BaseSensor):
+    name = "Voltage"
+    description = "ADC voltage monitor"
+    metrics = ["voltage", "current"]
+
+    def read(self):
+        return [
+            SensorReading("voltage", read_adc(0) * 3.3),
+            SensorReading("current", read_adc(1) * 0.1),
+        ]
+
+# Add to hub and run
+from plexus.connector import run_connector
+
+hub = SensorHub()
+hub.add(VoltageSensor(sample_rate=10))
+run_connector(sensor_hub=hub)
+```
+
+## Running as a Service
+
+The setup script automatically creates a systemd service. To manage it manually:
+
+```bash
+# Enable auto-start on boot
+sudo systemctl enable plexus
+
+# Start/stop/restart
+sudo systemctl start plexus
+sudo systemctl stop plexus
+sudo systemctl restart plexus
+
+# View logs
+journalctl -u plexus -f
+```
+
+Service file location: `/etc/systemd/system/plexus.service`
+
+## Python SDK (Direct Data Sending)
+
+For custom integrations where you want to send data directly:
 
 ```python
 from plexus import Plexus
@@ -61,16 +174,6 @@ from plexus import Plexus
 px = Plexus()
 px.send("temperature", 72.5)
 px.send("motor.rpm", 3450, tags={"motor_id": "A1"})
-```
-
-### Supported Value Types
-
-```python
-px.send("temperature", 72.5)                      # number
-px.send("status", "running")                      # string
-px.send("armed", True)                            # boolean
-px.send("position", {"x": 1.0, "y": 2.0})         # object
-px.send("spectrum", [0.1, 0.5, 0.8, 0.3])         # array
 ```
 
 ### Batch Send
@@ -85,99 +188,11 @@ px.send_batch([
 
 ### Session Recording
 
-Group related data for easy analysis:
-
 ```python
 with px.session("motor-test-001"):
     for _ in range(1000):
         px.send("temperature", read_temp())
-        px.send("rpm", read_rpm())
         time.sleep(0.01)  # 100Hz
-```
-
-## CLI Reference
-
-| Command                        | Description              |
-| ------------------------------ | ------------------------ |
-| `plexus login`                 | Sign in via browser      |
-| `plexus send <metric> <value>` | Send a value             |
-| `plexus stream <metric>`       | Stream from stdin        |
-| `plexus scan`                  | Detect connected sensors |
-| `plexus sensors`               | List supported sensors   |
-| `plexus run`                   | Stream all sensors       |
-| `plexus import <file>`         | Import CSV/TSV file      |
-| `plexus status`                | Check connection         |
-
-### Import CSV
-
-```bash
-plexus import sensor_data.csv
-plexus import flight_log.csv -s "flight-001"
-plexus import data.csv --dry-run
-```
-
-### MQTT Bridge
-
-```bash
-pip install plexus-agent[mqtt]
-plexus mqtt-bridge -b mqtt.example.com -t "sensors/#"
-```
-
-## Examples
-
-### Raspberry Pi + IMU (MPU6050)
-
-```python
-from plexus import Plexus
-from plexus.sensors import SensorHub, MPU6050
-
-hub = SensorHub()
-hub.add(MPU6050(sample_rate=100))  # 100 Hz
-hub.run(Plexus())
-```
-
-### Raspberry Pi + Environment (BME280)
-
-```python
-from plexus import Plexus
-from plexus.sensors import SensorHub, BME280
-
-hub = SensorHub()
-hub.add(BME280(sample_rate=1))  # 1 Hz
-hub.run(Plexus())
-```
-
-### Custom Sensor
-
-```python
-from plexus.sensors import BaseSensor, SensorReading
-
-class VoltageSensor(BaseSensor):
-    name = "Voltage"
-    metrics = ["voltage"]
-
-    def read(self):
-        return [SensorReading("voltage", read_adc() * 3.3)]
-
-hub = SensorHub()
-hub.add(VoltageSensor(sample_rate=10))
-hub.run(Plexus())
-```
-
-### Arduino Serial Bridge
-
-```python
-from plexus import Plexus
-import serial
-
-px = Plexus()
-ser = serial.Serial('/dev/ttyUSB0', 9600)
-
-while True:
-    line = ser.readline().decode().strip()
-    if ':' in line:
-        metric, value = line.split(':')
-        px.send(metric, float(value))
 ```
 
 ## Not Using Python?
@@ -191,15 +206,13 @@ curl -X POST https://app.plexus.company/api/ingest \
   -d '{"points": [{"metric": "temperature", "value": 72.5, "device_id": "pi-001"}]}'
 ```
 
-See [API.md](./API.md) for JavaScript, Go, and Arduino examples.
+See [API.md](./API.md) for JavaScript, Go, Arduino examples, and WebSocket protocol details.
 
 ## Installation Options
 
 ```bash
 pip install plexus-agent              # Core SDK
-pip install plexus-agent[sensors]     # + I2C sensor drivers (smbus2)
-pip install plexus-agent[mqtt]        # + MQTT bridge
-pip install plexus-agent[ros]         # + ROS bag import
+pip install plexus-agent[sensors]     # + I2C sensor drivers (recommended)
 pip install plexus-agent[all]         # Everything
 ```
 

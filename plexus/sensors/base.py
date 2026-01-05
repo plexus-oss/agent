@@ -279,6 +279,13 @@ class SensorHub:
         """Get info about all sensors."""
         return [s.get_info() for s in self.sensors]
 
+    def get_sensor(self, name: str) -> Optional[BaseSensor]:
+        """Get a sensor by name."""
+        for sensor in self.sensors:
+            if sensor.name == name:
+                return sensor
+        return None
+
 
 class _nullcontext:
     """Null context manager for Python 3.8 compatibility."""

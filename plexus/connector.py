@@ -1,7 +1,7 @@
 """
 WebSocket connector for remote terminal access and sensor streaming.
 
-Connects to the Plexus server and allows:
+Connects to the Plexus PartyKit server and allows:
 - Remote command execution
 - Bidirectional sensor streaming (start/stop from dashboard)
 - Real-time sensor configuration
@@ -19,7 +19,7 @@ from typing import Optional, Callable, TYPE_CHECKING
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-from plexus.config import get_api_key, get_endpoint, get_device_id
+from plexus.config import get_api_key, get_device_token, get_endpoint, get_device_id, get_org_id
 
 if TYPE_CHECKING:
     from plexus.sensors.base import SensorHub
@@ -27,35 +27,46 @@ if TYPE_CHECKING:
 
 class PlexusConnector:
     """
-    WebSocket client that connects to Plexus and executes commands remotely.
+    WebSocket client that connects to Plexus PartyKit server.
     Supports bidirectional streaming for sensor data.
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
+        device_token: Optional[str] = None,
         endpoint: Optional[str] = None,
         device_id: Optional[str] = None,
+        org_id: Optional[str] = None,
         on_status: Optional[Callable[[str], None]] = None,
         sensor_hub: Optional["SensorHub"] = None,
     ):
+        # Device token is preferred over API key (new pairing flow)
+        self.device_token = device_token or get_device_token()
         self.api_key = api_key or get_api_key()
         self.endpoint = (endpoint or get_endpoint()).rstrip("/")
         self.device_id = device_id or get_device_id()
+        self.org_id = org_id or get_org_id() or "default"
         self.on_status = on_status or (lambda x: None)
         self.sensor_hub = sensor_hub
 
         self._ws = None
         self._running = False
+        self._authenticated = False
         self._current_process: Optional[subprocess.Popen] = None
         self._active_streams: dict[str, asyncio.Task] = {}
+        self._current_session: Optional[dict] = None  # {session_id, session_name}
 
     def _get_ws_url(self) -> str:
-        """Get WebSocket URL via discovery or env var."""
+        """Get PartyKit WebSocket URL."""
         # 1. Explicit env var takes priority
         ws_endpoint = os.environ.get("PLEXUS_WS_URL")
         if ws_endpoint:
-            return f"{ws_endpoint.rstrip('/')}/ws/device"
+            base = ws_endpoint.rstrip("/")
+            # PartyKit URL format: ws://host/party/{room_id}
+            if "/party/" in base:
+                return base  # Already has room
+            return f"{base}/party/{self.org_id}"
 
         # 2. Try to discover from main API
         try:
@@ -65,28 +76,21 @@ class PlexusConnector:
                 config = resp.json()
                 ws_url = config.get("ws_url")
                 if ws_url:
-                    return f"{ws_url.rstrip('/')}/ws/device"
+                    base = ws_url.rstrip("/")
+                    return f"{base}/party/{self.org_id}"
         except Exception:
-            pass  # Fall through to fallback
+            pass
 
-        # 3. Fallback: derive from endpoint (won't work on Vercel, but useful for local dev)
-        url = self.endpoint.replace("https://", "wss://").replace("http://", "ws://")
-        return f"{url}/ws/device"
+        # 3. Fallback: local PartyKit dev server
+        return f"ws://127.0.0.1:1999/party/{self.org_id}"
 
     async def connect(self):
-        """Connect to the Plexus server and listen for commands."""
-        if not self.api_key:
-            raise ValueError("No API key configured. Run 'plexus init' first.")
+        """Connect to the Plexus PartyKit server and listen for commands."""
+        if not self.device_token and not self.api_key:
+            raise ValueError("No credentials configured. Run 'plexus pair' first.")
 
         ws_url = self._get_ws_url()
         self.on_status(f"Connecting to {ws_url}...")
-
-        headers = [
-            ("x-api-key", self.api_key),
-            ("x-device-id", self.device_id),
-            ("x-platform", platform.system()),
-            ("x-python-version", platform.python_version()),
-        ]
 
         self._running = True
 
@@ -94,20 +98,33 @@ class PlexusConnector:
             try:
                 async with websockets.connect(
                     ws_url,
-                    additional_headers=headers,
                     ping_interval=30,
                     ping_timeout=10,
                 ) as ws:
                     self._ws = ws
-                    self.on_status("Connected! Waiting for commands...")
+                    self._authenticated = False
 
-                    # Send initial handshake
-                    await ws.send(json.dumps({
-                        "type": "handshake",
+                    # Gather sensor info if available
+                    sensors_info = []
+                    if self.sensor_hub:
+                        sensors_info = self.sensor_hub.get_info()
+
+                    # Build auth message - prefer device_token over api_key
+                    auth_msg = {
+                        "type": "device_auth",
                         "device_id": self.device_id,
                         "platform": platform.system(),
-                        "cwd": os.getcwd(),
-                    }))
+                        "sensors": sensors_info,
+                    }
+                    if self.device_token:
+                        auth_msg["device_token"] = self.device_token
+                    elif self.api_key:
+                        auth_msg["api_key"] = self.api_key
+
+                    # Authenticate with PartyKit
+                    await ws.send(json.dumps(auth_msg))
+
+                    self.on_status("Authenticating...")
 
                     # Listen for messages
                     async for message in ws:
@@ -130,19 +147,36 @@ class PlexusConnector:
             data = json.loads(message)
             msg_type = data.get("type")
 
+            # Handle authentication response
+            if msg_type == "authenticated":
+                self._authenticated = True
+                self.on_status(f"Connected! Device ID: {data.get('device_id')}")
+                return
+
+            if msg_type == "error":
+                self.on_status(f"Error: {data.get('message')}")
+                return
+
+            # Only process commands if authenticated
+            if not self._authenticated:
+                return
+
             if msg_type == "execute":
                 await self._execute_command(data)
             elif msg_type == "cancel":
                 self._cancel_current()
             elif msg_type == "ping":
                 await self._ws.send(json.dumps({"type": "pong"}))
-            # Streaming control
             elif msg_type == "start_stream":
                 await self._start_stream(data)
             elif msg_type == "stop_stream":
                 await self._stop_stream(data)
             elif msg_type == "configure":
                 await self._configure_sensor(data)
+            elif msg_type == "start_session":
+                await self._start_session(data)
+            elif msg_type == "stop_session":
+                await self._stop_session(data)
 
         except json.JSONDecodeError:
             self.on_status(f"Invalid message: {message}")
@@ -169,7 +203,6 @@ class PlexusConnector:
             try:
                 while stream_id in self._active_streams:
                     all_readings = self.sensor_hub.read_all()
-                    # Filter by requested metrics if specified
                     if metrics:
                         readings = [r for r in all_readings if r.metric in metrics]
                     else:
@@ -184,7 +217,6 @@ class PlexusConnector:
                     ]
                     await self._ws.send(json.dumps({
                         "type": "telemetry",
-                        "stream_id": stream_id,
                         "points": points,
                     }))
                     await asyncio.sleep(interval_ms / 1000)
@@ -205,8 +237,7 @@ class PlexusConnector:
             del self._active_streams[stream_id]
             self.on_status(f"Stopped stream {stream_id}")
         elif stream_id == "*":
-            # Stop all streams
-            for sid, task in self._active_streams.items():
+            for task in self._active_streams.values():
                 task.cancel()
             self._active_streams.clear()
             self.on_status("Stopped all streams")
@@ -227,6 +258,87 @@ class PlexusConnector:
             except Exception as e:
                 self.on_status(f"Failed to configure {sensor_name}: {e}")
 
+    async def _start_session(self, data: dict):
+        """Start a recording session - streams data with session_id tag."""
+        session_id = data.get("session_id")
+        session_name = data.get("session_name", "Untitled")
+        metrics = data.get("metrics", [])
+        interval_ms = data.get("interval_ms", 100)
+
+        if not self.sensor_hub:
+            self.on_status("No sensor hub configured - cannot record session")
+            await self._ws.send(json.dumps({
+                "type": "output",
+                "id": session_id,
+                "event": "error",
+                "error": "No sensors configured on this device",
+            }))
+            return
+
+        # Store current session info
+        self._current_session = {
+            "session_id": session_id,
+            "session_name": session_name,
+        }
+
+        self.on_status(f"Starting session '{session_name}' ({session_id})")
+
+        async def session_stream_loop():
+            try:
+                while session_id in self._active_streams and self._current_session:
+                    all_readings = self.sensor_hub.read_all()
+                    if metrics:
+                        readings = [r for r in all_readings if r.metric in metrics]
+                    else:
+                        readings = all_readings
+                    points = [
+                        {
+                            "metric": r.metric,
+                            "value": r.value,
+                            "timestamp": int(time.time() * 1000),
+                            "tags": {"session_id": session_id},  # Tag with session
+                        }
+                        for r in readings
+                    ]
+                    await self._ws.send(json.dumps({
+                        "type": "telemetry",
+                        "points": points,
+                        "session_id": session_id,  # Include session_id at message level too
+                    }))
+                    await asyncio.sleep(interval_ms / 1000)
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                self.on_status(f"Session stream error: {e}")
+
+        task = asyncio.create_task(session_stream_loop())
+        self._active_streams[session_id] = task
+
+        # Notify that session has started
+        await self._ws.send(json.dumps({
+            "type": "session_started",
+            "session_id": session_id,
+            "session_name": session_name,
+        }))
+
+    async def _stop_session(self, data: dict):
+        """Stop a recording session."""
+        session_id = data.get("session_id")
+
+        if session_id in self._active_streams:
+            self._active_streams[session_id].cancel()
+            del self._active_streams[session_id]
+            self.on_status(f"Stopped session {session_id}")
+
+        if self._current_session and self._current_session.get("session_id") == session_id:
+            self._current_session = None
+
+        # Notify that session has stopped
+        await self._ws.send(json.dumps({
+            "type": "session_stopped",
+            "session_id": session_id,
+        }))
+
     async def _execute_command(self, data: dict):
         """Execute a shell command and stream output back."""
         command = data.get("command", "")
@@ -237,7 +349,6 @@ class PlexusConnector:
 
         self.on_status(f"Executing: {command}")
 
-        # Send start notification
         await self._ws.send(json.dumps({
             "type": "output",
             "id": cmd_id,
@@ -246,8 +357,6 @@ class PlexusConnector:
         }))
 
         try:
-            # Execute command safely without shell=True to prevent injection
-            # Use shlex.split to properly parse the command into arguments
             try:
                 args = shlex.split(command)
             except ValueError as e:
@@ -269,7 +378,6 @@ class PlexusConnector:
                 cwd=os.getcwd(),
             )
 
-            # Stream output line by line
             for line in iter(self._current_process.stdout.readline, ""):
                 if not self._running:
                     break
@@ -280,10 +388,8 @@ class PlexusConnector:
                     "data": line,
                 }))
 
-            # Wait for process to complete
             return_code = self._current_process.wait()
 
-            # Send completion
             await self._ws.send(json.dumps({
                 "type": "output",
                 "id": cmd_id,
@@ -312,16 +418,15 @@ class PlexusConnector:
         """Disconnect from the server."""
         self._running = False
         self._cancel_current()
-        # Stop all active streams
         for task in self._active_streams.values():
             task.cancel()
         self._active_streams.clear()
-        # Note: WebSocket will be closed when the connection context exits
         self._ws = None
 
 
 def run_connector(
     api_key: Optional[str] = None,
+    device_token: Optional[str] = None,
     endpoint: Optional[str] = None,
     on_status: Optional[Callable[[str], None]] = None,
     sensor_hub: Optional["SensorHub"] = None,
@@ -329,6 +434,7 @@ def run_connector(
     """Run the connector (blocking)."""
     connector = PlexusConnector(
         api_key=api_key,
+        device_token=device_token,
         endpoint=endpoint,
         on_status=on_status,
         sensor_hub=sensor_hub,
@@ -337,5 +443,4 @@ def run_connector(
     try:
         asyncio.run(connector.connect())
     except KeyboardInterrupt:
-        # disconnect() just sets flags - actual cleanup happens in connect()
         connector.disconnect()

@@ -16,7 +16,9 @@ PLEXUS_ENDPOINT = "https://app.plexus.company"
 
 DEFAULT_CONFIG = {
     "api_key": None,
+    "device_token": None,  # New: device token from pairing
     "device_id": None,
+    "org_id": None,
 }
 
 def get_config_path() -> Path:
@@ -58,6 +60,17 @@ def get_api_key() -> Optional[str]:
     return config.get("api_key")
 
 
+def get_device_token() -> Optional[str]:
+    """Get device token from config or environment variable."""
+    # Environment variable takes precedence
+    env_token = os.environ.get("PLEXUS_DEVICE_TOKEN")
+    if env_token:
+        return env_token
+
+    config = load_config()
+    return config.get("device_token")
+
+
 def get_endpoint() -> str:
     """Get the API endpoint URL."""
     return PLEXUS_ENDPOINT
@@ -77,9 +90,20 @@ def get_device_id() -> Optional[str]:
     return device_id
 
 
+def get_org_id() -> Optional[str]:
+    """Get the organization ID from config or environment variable."""
+    # Environment variable takes precedence
+    env_org = os.environ.get("PLEXUS_ORG_ID")
+    if env_org:
+        return env_org
+
+    config = load_config()
+    return config.get("org_id")
+
+
 def is_logged_in() -> bool:
-    """Check if user is logged in (has API key configured)."""
-    return get_api_key() is not None
+    """Check if device is authenticated (has device token or API key)."""
+    return get_device_token() is not None or get_api_key() is not None
 
 
 def require_login() -> None:

@@ -9,35 +9,49 @@ Send telemetry data to Plexus using HTTP or WebSocket.
 │                              PLEXUS CLOUD                                 │
 ├──────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
-│   Frontend (Vercel)                    WebSocket Server (Fly.io)         │
-│   app.plexus.company                   server-*.fly.dev                  │
-│   ├── /api/ingest      POST           ├── /ws/device     Device conn    │
-│   ├── /api/sessions    POST           └── /ws/browser    Browser conn   │
-│   ├── /api/config      GET  (public)                                    │
-│   └── /api/auth/verify-key GET                                          │
+│   Frontend (Next.js)                     PartyKit Server                 │
+│   app.plexus.company                     plexus-realtime.partykit.dev    │
+│   ├── /api/ingest           POST         ├── Device connections          │
+│   ├── /api/sessions         POST/PATCH   ├── Browser connections         │
+│   ├── /api/devices/pair     POST/GET     └── Real-time relay             │
+│   ├── /api/auth/verify-key  GET                                          │
+│   └── /api/auth/verify-device POST       (Device token verification)     │
 │                                                                          │
 └──────────────────────────────────────────────────────────────────────────┘
 
          ▲                                        ▲
          │ HTTP                                   │ WebSocket
-         │                                        │
+         │ (API Key)                              │ (Device Token)
     ┌────┴────┐                              ┌────┴────┐
-    │ Sensors │                              │   CLI   │
-    │ Scripts │  plexus send / HTTP POST     │ plexus  │
-    │ Devices │                              │ connect │
+    │ Scripts │                              │  Agent  │
+    │ Devices │  Direct HTTP POST            │ plexus  │
+    │   IoT   │                              │   run   │
     └─────────┘                              └─────────┘
 ```
 
 **Two ways to send data:**
 
-| Method | Endpoint | Use Case |
-|--------|----------|----------|
-| HTTP POST | `/api/ingest` | Simple, batch, one-way telemetry |
-| WebSocket | `/ws/device` | Bidirectional, real-time, remote commands |
-
-**Discovery:** Call `GET /api/config` to get the WebSocket server URL.
+| Method    | Use Case                                        |
+| --------- | ----------------------------------------------- |
+| HTTP POST | Simple scripts, batch uploads, embedded devices |
+| WebSocket | Real-time streaming, UI-controlled devices      |
 
 ## Quick Start
+
+### Option 1: Web-Controlled Device (Recommended)
+
+Pair your device from the dashboard and control everything via UI:
+
+```bash
+# On your device
+curl -sL https://app.plexus.company/setup | bash -s -- --code ABC123
+```
+
+Then control streaming, recording, and configuration from [app.plexus.company/fleet](https://app.plexus.company/fleet).
+
+### Option 2: Direct HTTP
+
+Send data directly via HTTP:
 
 ```bash
 curl -X POST https://app.plexus.company/api/ingest \
@@ -53,22 +67,35 @@ curl -X POST https://app.plexus.company/api/ingest \
   }'
 ```
 
-## Getting an API Key
+## Authentication
 
-**Plexus Cloud:**
+Plexus uses two types of credentials:
+
+| Type          | Prefix   | Use Case                                    |
+| ------------- | -------- | ------------------------------------------- |
+| Device Token  | `plxd_`  | WebSocket connections (agent `plexus run`)  |
+| API Key       | `plx_`   | Direct HTTP access (scripts, embedded IoT)  |
+
+### Getting a Device Token
+
+Device tokens are created automatically during pairing:
+
+1. Go to [app.plexus.company/fleet](https://app.plexus.company/fleet)
+2. Click "Pair Device"
+3. Run the setup command on your device (or `plexus pair --code ABC123`)
+4. Device token is saved to `~/.plexus/config.json`
+
+### Getting an API Key (for HTTP)
+
+For direct HTTP access without the agent:
 
 1. Sign up at [app.plexus.company](https://app.plexus.company)
 2. Go to Settings → Connections
 3. Create an API key (starts with `plx_`)
 
-## Endpoints
+## HTTP API
 
-| Endpoint        | Method | Description                  |
-| --------------- | ------ | ---------------------------- |
-| `/api/ingest`   | POST   | Send telemetry data          |
-| `/api/sessions` | POST   | Start/end recording sessions |
-
-## Authentication
+### Authentication
 
 All requests require an API key in the header:
 
@@ -76,7 +103,7 @@ All requests require an API key in the header:
 x-api-key: plx_xxxxx
 ```
 
-## Send Data
+### Send Data
 
 **POST** `/api/ingest`
 
@@ -106,8 +133,6 @@ x-api-key: plx_xxxxx
 
 ### Supported Value Types
 
-Plexus accepts multiple value types to support diverse sensor data:
-
 | Type    | Example                          | Use Case                         |
 | ------- | -------------------------------- | -------------------------------- |
 | number  | `72.5`, `-40`, `3.14159`         | Numeric readings (most common)   |
@@ -116,88 +141,221 @@ Plexus accepts multiple value types to support diverse sensor data:
 | object  | `{"x": 1.2, "y": 3.4, "z": 5.6}` | Vector data, structured readings |
 | array   | `[1.0, 2.0, 3.0, 4.0]`           | Waveforms, multiple values       |
 
-```json
-{
-  "points": [
-    { "metric": "temperature", "value": 72.5, "device_id": "pi-001" },
-    { "metric": "motor_state", "value": "running", "device_id": "pi-001" },
-    { "metric": "armed", "value": true, "device_id": "pi-001" },
-    {
-      "metric": "accel",
-      "value": { "x": 0.1, "y": 0.2, "z": 9.8 },
-      "device_id": "pi-001"
-    },
-    {
-      "metric": "fft_bins",
-      "value": [0.1, 0.5, 0.8, 0.3],
-      "device_id": "pi-001"
-    }
-  ]
-}
-```
-
-**Response:** `200 OK` on success
-
-## Sessions
+### Sessions
 
 Group related data for analysis and playback.
 
-**Start session:**
+**Create session:**
 
 ```json
 POST /api/sessions
 {
   "session_id": "test-001",
+  "name": "Motor Test Run",
   "device_id": "sensor-001",
-  "status": "started",
-  "timestamp": 1699900000
+  "status": "active"
 }
 ```
 
 **End session:**
 
 ```json
-POST /api/sessions
+PATCH /api/sessions/{session_id}
 {
-  "session_id": "test-001",
-  "device_id": "sensor-001",
-  "status": "ended",
-  "timestamp": 1699903600
+  "status": "completed",
+  "ended_at": "2024-01-15T10:30:00Z"
 }
 ```
 
-## Examples
+## WebSocket API
 
-### Bash
+For real-time UI-controlled streaming, devices connect via WebSocket.
 
-```bash
-#!/bin/bash
-API_KEY="plx_xxxxx"
-DEVICE_ID="sensor-001"
+### Connection Flow
 
-curl -X POST https://app.plexus.company/api/ingest \
-  -H "x-api-key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"points\": [{
-      \"metric\": \"temperature\",
-      \"value\": 72.5,
-      \"timestamp\": $(date +%s),
-      \"device_id\": \"$DEVICE_ID\"
-    }]
-  }"
+1. Device connects to PartyKit server
+2. Device authenticates with device token (or legacy API key)
+3. Device reports available sensors
+4. Dashboard controls streaming via messages
+
+### Device Authentication
+
+Devices authenticate using a device token (from pairing) or API key (legacy):
+
+```json
+// Device → Server (using device token - recommended)
+{
+  "type": "device_auth",
+  "device_token": "plxd_xxxxx",
+  "device_id": "my-device-001",
+  "platform": "Linux",
+  "sensors": [
+    {
+      "name": "MPU6050",
+      "description": "6-axis IMU",
+      "metrics": ["accel_x", "accel_y", "accel_z", "gyro_x", "gyro_y", "gyro_z"],
+      "sample_rate": 100,
+      "prefix": "",
+      "available": true
+    }
+  ]
+}
+
+// Device → Server (using API key - legacy, still supported)
+{
+  "type": "device_auth",
+  "api_key": "plx_xxxxx",
+  "device_id": "my-device-001",
+  "platform": "Linux",
+  "sensors": []
+}
+
+// Server → Device
+{
+  "type": "authenticated",
+  "device_id": "my-device-001"
+}
+```
+
+### Message Types (Dashboard → Device)
+
+| Type            | Description                       |
+| --------------- | --------------------------------- |
+| `start_stream`  | Start streaming sensor data       |
+| `stop_stream`   | Stop streaming                    |
+| `start_session` | Start recording to a session      |
+| `stop_session`  | Stop recording                    |
+| `configure`     | Configure sensor (e.g., sample rate) |
+| `execute`       | Run a shell command               |
+| `cancel`        | Cancel running command            |
+| `ping`          | Keepalive request                 |
+
+### Message Types (Device → Dashboard)
+
+| Type              | Description              |
+| ----------------- | ------------------------ |
+| `telemetry`       | Sensor data points       |
+| `session_started` | Confirm session started  |
+| `session_stopped` | Confirm session stopped  |
+| `output`          | Command output           |
+| `pong`            | Keepalive response       |
+
+### Start Streaming
+
+```json
+// Dashboard → Device
+{
+  "type": "start_stream",
+  "device_id": "my-device-001",
+  "metrics": ["accel_x", "accel_y", "accel_z"],
+  "interval_ms": 100
+}
+
+// Device → Dashboard (continuous)
+{
+  "type": "telemetry",
+  "points": [
+    { "metric": "accel_x", "value": 0.12, "timestamp": 1699900000123 },
+    { "metric": "accel_y", "value": 0.05, "timestamp": 1699900000123 },
+    { "metric": "accel_z", "value": 9.81, "timestamp": 1699900000123 }
+  ]
+}
+```
+
+### Start Session (Recording)
+
+```json
+// Dashboard → Device
+{
+  "type": "start_session",
+  "device_id": "my-device-001",
+  "session_id": "session_1699900000_abc123",
+  "session_name": "Motor Test",
+  "metrics": [],
+  "interval_ms": 100
+}
+
+// Device → Dashboard
+{
+  "type": "session_started",
+  "session_id": "session_1699900000_abc123",
+  "session_name": "Motor Test"
+}
+
+// Device streams telemetry with session_id tag
+{
+  "type": "telemetry",
+  "session_id": "session_1699900000_abc123",
+  "points": [
+    {
+      "metric": "accel_x",
+      "value": 0.12,
+      "timestamp": 1699900000123,
+      "tags": { "session_id": "session_1699900000_abc123" }
+    }
+  ]
+}
+```
+
+### Configure Sensor
+
+```json
+// Dashboard → Device
+{
+  "type": "configure",
+  "device_id": "my-device-001",
+  "sensor": "MPU6050",
+  "config": {
+    "sample_rate": 50
+  }
+}
+```
+
+### Execute Command
+
+```json
+// Dashboard → Device
+{
+  "type": "execute",
+  "id": "cmd-123",
+  "command": "uname -a"
+}
+
+// Device → Dashboard (streamed)
+{"type": "output", "id": "cmd-123", "event": "start", "command": "uname -a"}
+{"type": "output", "id": "cmd-123", "event": "data", "data": "Linux raspberrypi..."}
+{"type": "output", "id": "cmd-123", "event": "exit", "code": 0}
+```
+
+## Code Examples
+
+### Python (Direct HTTP)
+
+```python
+import requests
+import time
+
+requests.post(
+    "https://app.plexus.company/api/ingest",
+    headers={"x-api-key": "plx_xxxxx"},
+    json={
+        "points": [{
+            "metric": "temperature",
+            "value": 72.5,
+            "timestamp": time.time(),
+            "device_id": "sensor-001"
+        }]
+    }
+)
 ```
 
 ### JavaScript
 
 ```javascript
-const API_KEY = "plx_xxxxx";
-const DEVICE_ID = "sensor-001";
-
 await fetch("https://app.plexus.company/api/ingest", {
   method: "POST",
   headers: {
-    "x-api-key": API_KEY,
+    "x-api-key": "plx_xxxxx",
     "Content-Type": "application/json",
   },
   body: JSON.stringify({
@@ -206,7 +364,7 @@ await fetch("https://app.plexus.company/api/ingest", {
         metric: "temperature",
         value: 72.5,
         timestamp: Date.now() / 1000,
-        device_id: DEVICE_ID,
+        device_id: "sensor-001",
       },
     ],
   }),
@@ -244,26 +402,6 @@ func main() {
 }
 ```
 
-### Python (no SDK)
-
-```python
-import requests
-import time
-
-requests.post(
-    "https://app.plexus.company/api/ingest",
-    headers={"x-api-key": "plx_xxxxx"},
-    json={
-        "points": [{
-            "metric": "temperature",
-            "value": 72.5,
-            "timestamp": time.time(),
-            "device_id": "sensor-001"
-        }]
-    }
-)
-```
-
 ### Arduino / ESP32
 
 ```cpp
@@ -288,42 +426,34 @@ void sendToPlexus(const char* metric, float value) {
 }
 ```
 
-## Self-Hosted
-
-For self-hosted instances, replace the endpoint:
+### Bash
 
 ```bash
-curl -X POST http://your-server:3000/api/ingest \
-  -H "x-api-key: plx_selfhost_default_key_12345678" \
-  ...
+#!/bin/bash
+API_KEY="plx_xxxxx"
+DEVICE_ID="sensor-001"
+
+curl -X POST https://app.plexus.company/api/ingest \
+  -H "x-api-key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"points\": [{
+      \"metric\": \"temperature\",
+      \"value\": 72.5,
+      \"timestamp\": $(date +%s),
+      \"device_id\": \"$DEVICE_ID\"
+    }]
+  }"
 ```
-
-## Errors
-
-| Status | Meaning                         |
-| ------ | ------------------------------- |
-| 200    | Success                         |
-| 400    | Bad request (check JSON format) |
-| 401    | Invalid or missing API key      |
-| 403    | API key lacks permissions       |
-
-## Best Practices
-
-- **Batch points** - Send up to 100 points per request
-- **Use timestamps** - Always include accurate timestamps
-- **Consistent device_id** - Use the same ID for each physical device
-- **Use tags** - Label data for filtering (e.g., `{"location": "lab", "unit": "celsius"}`)
 
 ## Python SDK with Sensor Drivers
 
-The Python SDK includes pre-built drivers for common sensors. Zero configuration required.
-
-### Quick Start (Raspberry Pi)
+For Raspberry Pi and other Linux devices, the Python SDK includes sensor drivers:
 
 ```bash
 pip install plexus-agent[sensors]
-plexus login
-plexus run  # Auto-detects and streams all connected sensors
+plexus pair --code YOUR_CODE
+plexus run
 ```
 
 ### Supported Sensors
@@ -334,41 +464,7 @@ plexus run  # Auto-detects and streams all connected sensors
 | MPU9250 | 9-axis IMU  | `accel_x`, `accel_y`, `accel_z`, `gyro_x`, `gyro_y`, `gyro_z` | 0x68        |
 | BME280  | Environment | `temperature`, `humidity`, `pressure`                         | 0x76, 0x77  |
 
-### CLI Commands
-
-```bash
-plexus sensors        # List all supported sensors and their metrics
-plexus scan           # Detect sensors connected to your device
-plexus run            # Stream all detected sensors to Plexus
-plexus run --rate 50  # Override sample rate (Hz)
-```
-
-### Python API
-
-```python
-from plexus import Plexus
-from plexus.sensors import SensorHub, MPU6050, BME280
-
-# Manual setup
-hub = SensorHub()
-hub.add(MPU6050(sample_rate=100))  # 100 Hz for IMU
-hub.add(BME280(sample_rate=1))     # 1 Hz for environmental
-hub.run(Plexus())
-```
-
-### Auto-Detection
-
-```python
-from plexus import Plexus
-from plexus.sensors import auto_sensors
-
-hub = auto_sensors()  # Scans I2C bus, creates drivers
-hub.run(Plexus())     # Streams everything
-```
-
 ### Custom Sensors
-
-Extend `BaseSensor` to add your own:
 
 ```python
 from plexus.sensors import BaseSensor, SensorReading
@@ -382,124 +478,24 @@ class MySensor(BaseSensor):
             SensorReading("voltage", read_adc(0) * 3.3),
             SensorReading("current", read_adc(1) * 0.1),
         ]
-
-hub = SensorHub()
-hub.add(MySensor(sample_rate=10))
-hub.run(Plexus())
 ```
 
-## Why use the Python SDK?
+## Errors
 
-The SDK adds convenience but isn't required:
+| Status | Meaning                         |
+| ------ | ------------------------------- |
+| 200    | Success                         |
+| 400    | Bad request (check JSON format) |
+| 401    | Invalid or missing API key      |
+| 403    | API key lacks permissions       |
+| 404    | Resource not found              |
+| 410    | Resource expired (e.g., pairing code) |
 
-| Feature        | Raw HTTP         | Python SDK              |
-| -------------- | ---------------- | ----------------------- |
-| Send data      | Manual JSON      | `px.send("temp", 72.5)` |
-| Sessions       | Manual start/end | `with px.session():`    |
-| Auth setup     | Manual header    | `plexus login`          |
-| Batching       | Manual           | `px.send_batch([...])`  |
-| MQTT bridge    | Not available    | `plexus mqtt-bridge`    |
-| Sensor drivers | Not available    | `plexus run`            |
-| Auto-detect    | Not available    | `plexus scan`           |
+## Best Practices
 
-Use raw HTTP when:
-
-- You're not using Python
-- You want minimal dependencies
-- You're on embedded devices (Arduino, ESP32)
-- You're building your own client library
-
-## WebSocket API (Bidirectional)
-
-For real-time streaming and remote command execution, use WebSocket.
-
-### Connect (CLI)
-
-```bash
-plexus connect
-```
-
-This connects to the WebSocket server and enables:
-- Real-time telemetry streaming
-- Remote command execution from dashboard
-- Sensor configuration changes
-
-### Discovery
-
-Get the WebSocket URL from the config endpoint:
-
-```bash
-curl https://app.plexus.company/api/config
-```
-
-Response:
-```json
-{
-  "ws_url": "wss://server-dawn-fire-2564.fly.dev",
-  "version": "1.0",
-  "features": {
-    "bidirectional_streaming": true,
-    "remote_commands": true
-  }
-}
-```
-
-### Manual WebSocket Connection
-
-Connect with your API key in headers:
-
-```
-WebSocket: wss://{ws_url}/ws/device
-Headers:
-  x-api-key: plx_xxxxx
-  x-device-id: my-device-001
-  x-platform: Linux
-```
-
-### Message Types (Device → Server)
-
-| Type | Description |
-|------|-------------|
-| `handshake` | Initial device info |
-| `telemetry` | Sensor data points |
-| `output` | Command output |
-| `pong` | Keepalive response |
-
-### Message Types (Server → Device)
-
-| Type | Description |
-|------|-------------|
-| `execute` | Run a shell command |
-| `cancel` | Cancel running command |
-| `start_stream` | Start sensor streaming |
-| `stop_stream` | Stop sensor streaming |
-| `configure` | Configure a sensor |
-| `ping` | Keepalive request |
-
-### Example: Telemetry Message
-
-```json
-{
-  "type": "telemetry",
-  "points": [
-    {"metric": "temperature", "value": 72.5, "timestamp": 1699900000}
-  ]
-}
-```
-
-### Example: Execute Command
-
-```json
-{
-  "type": "execute",
-  "id": "cmd-123",
-  "command": "uname -a"
-}
-```
-
-Response (streamed):
-```json
-{"type": "output", "id": "cmd-123", "event": "start", "command": "uname -a"}
-{"type": "output", "id": "cmd-123", "event": "data", "data": "Linux raspberrypi..."}
-{"type": "output", "id": "cmd-123", "event": "exit", "code": 0}
-```
+- **Batch points** - Send up to 100 points per request for HTTP
+- **Use timestamps** - Always include accurate timestamps
+- **Consistent device_id** - Use the same ID for each physical device
+- **Use tags** - Label data for filtering (e.g., `{"location": "lab"}`)
+- **Use sessions** - Group related data for easier analysis
+- **Prefer WebSocket** - For real-time UI-controlled devices, use `plexus run`
