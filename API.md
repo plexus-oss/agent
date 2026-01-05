@@ -1,6 +1,41 @@
-# Plexus HTTP API
+# Plexus API
 
-Send telemetry data to Plexus using any HTTP client. No SDK required.
+Send telemetry data to Plexus using HTTP or WebSocket.
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                              PLEXUS CLOUD                                 │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│   Frontend (Vercel)                    WebSocket Server (Fly.io)         │
+│   app.plexus.company                   server-*.fly.dev                  │
+│   ├── /api/ingest      POST           ├── /ws/device     Device conn    │
+│   ├── /api/sessions    POST           └── /ws/browser    Browser conn   │
+│   ├── /api/config      GET  (public)                                    │
+│   └── /api/auth/verify-key GET                                          │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+
+         ▲                                        ▲
+         │ HTTP                                   │ WebSocket
+         │                                        │
+    ┌────┴────┐                              ┌────┴────┐
+    │ Sensors │                              │   CLI   │
+    │ Scripts │  plexus send / HTTP POST     │ plexus  │
+    │ Devices │                              │ connect │
+    └─────────┘                              └─────────┘
+```
+
+**Two ways to send data:**
+
+| Method | Endpoint | Use Case |
+|--------|----------|----------|
+| HTTP POST | `/api/ingest` | Simple, batch, one-way telemetry |
+| WebSocket | `/ws/device` | Bidirectional, real-time, remote commands |
+
+**Discovery:** Call `GET /api/config` to get the WebSocket server URL.
 
 ## Quick Start
 
@@ -73,13 +108,13 @@ x-api-key: plx_xxxxx
 
 Plexus accepts multiple value types to support diverse sensor data:
 
-| Type    | Example                           | Use Case                          |
-| ------- | --------------------------------- | --------------------------------- |
-| number  | `72.5`, `-40`, `3.14159`          | Numeric readings (most common)    |
-| string  | `"error"`, `"idle"`, `"running"`  | Status, state, labels             |
-| boolean | `true`, `false`                   | On/off, enabled/disabled          |
-| object  | `{"x": 1.2, "y": 3.4, "z": 5.6}`  | Vector data, structured readings  |
-| array   | `[1.0, 2.0, 3.0, 4.0]`            | Waveforms, multiple values        |
+| Type    | Example                          | Use Case                         |
+| ------- | -------------------------------- | -------------------------------- |
+| number  | `72.5`, `-40`, `3.14159`         | Numeric readings (most common)   |
+| string  | `"error"`, `"idle"`, `"running"` | Status, state, labels            |
+| boolean | `true`, `false`                  | On/off, enabled/disabled         |
+| object  | `{"x": 1.2, "y": 3.4, "z": 5.6}` | Vector data, structured readings |
+| array   | `[1.0, 2.0, 3.0, 4.0]`           | Waveforms, multiple values       |
 
 ```json
 {
@@ -87,8 +122,16 @@ Plexus accepts multiple value types to support diverse sensor data:
     { "metric": "temperature", "value": 72.5, "device_id": "pi-001" },
     { "metric": "motor_state", "value": "running", "device_id": "pi-001" },
     { "metric": "armed", "value": true, "device_id": "pi-001" },
-    { "metric": "accel", "value": {"x": 0.1, "y": 0.2, "z": 9.8}, "device_id": "pi-001" },
-    { "metric": "fft_bins", "value": [0.1, 0.5, 0.8, 0.3], "device_id": "pi-001" }
+    {
+      "metric": "accel",
+      "value": { "x": 0.1, "y": 0.2, "z": 9.8 },
+      "device_id": "pi-001"
+    },
+    {
+      "metric": "fft_bins",
+      "value": [0.1, 0.5, 0.8, 0.3],
+      "device_id": "pi-001"
+    }
   ]
 }
 ```
@@ -285,11 +328,11 @@ plexus run  # Auto-detects and streams all connected sensors
 
 ### Supported Sensors
 
-| Sensor  | Type        | Metrics                                              | I2C Address |
-| ------- | ----------- | ---------------------------------------------------- | ----------- |
-| MPU6050 | 6-axis IMU  | `accel_x`, `accel_y`, `accel_z`, `gyro_x`, `gyro_y`, `gyro_z` | 0x68, 0x69 |
-| MPU9250 | 9-axis IMU  | `accel_x`, `accel_y`, `accel_z`, `gyro_x`, `gyro_y`, `gyro_z` | 0x68       |
-| BME280  | Environment | `temperature`, `humidity`, `pressure`                | 0x76, 0x77 |
+| Sensor  | Type        | Metrics                                                       | I2C Address |
+| ------- | ----------- | ------------------------------------------------------------- | ----------- |
+| MPU6050 | 6-axis IMU  | `accel_x`, `accel_y`, `accel_z`, `gyro_x`, `gyro_y`, `gyro_z` | 0x68, 0x69  |
+| MPU9250 | 9-axis IMU  | `accel_x`, `accel_y`, `accel_z`, `gyro_x`, `gyro_y`, `gyro_z` | 0x68        |
+| BME280  | Environment | `temperature`, `humidity`, `pressure`                         | 0x76, 0x77  |
 
 ### CLI Commands
 
@@ -365,3 +408,98 @@ Use raw HTTP when:
 - You want minimal dependencies
 - You're on embedded devices (Arduino, ESP32)
 - You're building your own client library
+
+## WebSocket API (Bidirectional)
+
+For real-time streaming and remote command execution, use WebSocket.
+
+### Connect (CLI)
+
+```bash
+plexus connect
+```
+
+This connects to the WebSocket server and enables:
+- Real-time telemetry streaming
+- Remote command execution from dashboard
+- Sensor configuration changes
+
+### Discovery
+
+Get the WebSocket URL from the config endpoint:
+
+```bash
+curl https://app.plexus.company/api/config
+```
+
+Response:
+```json
+{
+  "ws_url": "wss://server-dawn-fire-2564.fly.dev",
+  "version": "1.0",
+  "features": {
+    "bidirectional_streaming": true,
+    "remote_commands": true
+  }
+}
+```
+
+### Manual WebSocket Connection
+
+Connect with your API key in headers:
+
+```
+WebSocket: wss://{ws_url}/ws/device
+Headers:
+  x-api-key: plx_xxxxx
+  x-device-id: my-device-001
+  x-platform: Linux
+```
+
+### Message Types (Device → Server)
+
+| Type | Description |
+|------|-------------|
+| `handshake` | Initial device info |
+| `telemetry` | Sensor data points |
+| `output` | Command output |
+| `pong` | Keepalive response |
+
+### Message Types (Server → Device)
+
+| Type | Description |
+|------|-------------|
+| `execute` | Run a shell command |
+| `cancel` | Cancel running command |
+| `start_stream` | Start sensor streaming |
+| `stop_stream` | Stop sensor streaming |
+| `configure` | Configure a sensor |
+| `ping` | Keepalive request |
+
+### Example: Telemetry Message
+
+```json
+{
+  "type": "telemetry",
+  "points": [
+    {"metric": "temperature", "value": 72.5, "timestamp": 1699900000}
+  ]
+}
+```
+
+### Example: Execute Command
+
+```json
+{
+  "type": "execute",
+  "id": "cmd-123",
+  "command": "uname -a"
+}
+```
+
+Response (streamed):
+```json
+{"type": "output", "id": "cmd-123", "event": "start", "command": "uname -a"}
+{"type": "output", "id": "cmd-123", "event": "data", "data": "Linux raspberrypi..."}
+{"type": "output", "id": "cmd-123", "event": "exit", "code": 0}
+```

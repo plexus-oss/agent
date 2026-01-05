@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import platform
+import shlex
 import subprocess
 import time
 from typing import Optional, Callable, TYPE_CHECKING
@@ -240,10 +241,22 @@ class PlexusConnector:
         }))
 
         try:
-            # Execute command
+            # Execute command safely without shell=True to prevent injection
+            # Use shlex.split to properly parse the command into arguments
+            try:
+                args = shlex.split(command)
+            except ValueError as e:
+                await self._ws.send(json.dumps({
+                    "type": "output",
+                    "id": cmd_id,
+                    "event": "error",
+                    "error": f"Invalid command syntax: {e}",
+                }))
+                return
+
             self._current_process = subprocess.Popen(
-                command,
-                shell=True,
+                args,
+                shell=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -298,8 +311,8 @@ class PlexusConnector:
         for task in self._active_streams.values():
             task.cancel()
         self._active_streams.clear()
-        if self._ws:
-            asyncio.create_task(self._ws.close())
+        # Note: WebSocket will be closed when the connection context exits
+        self._ws = None
 
 
 def run_connector(
@@ -317,4 +330,5 @@ def run_connector(
     try:
         asyncio.run(connector.connect())
     except KeyboardInterrupt:
+        # disconnect() just sets flags - actual cleanup happens in connect()
         connector.disconnect()

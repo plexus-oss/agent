@@ -27,11 +27,11 @@ plexus run    # Stream everything
 
 Supported sensors:
 
-| Sensor  | Type        | Metrics                                         |
-| ------- | ----------- | ----------------------------------------------- |
-| MPU6050 | 6-axis IMU  | accel_x/y/z, gyro_x/y/z                         |
-| MPU9250 | 9-axis IMU  | accel_x/y/z, gyro_x/y/z                         |
-| BME280  | Environment | temperature, humidity, pressure                 |
+| Sensor  | Type        | Metrics                         |
+| ------- | ----------- | ------------------------------- |
+| MPU6050 | 6-axis IMU  | accel_x/y/z, gyro_x/y/z         |
+| MPU9250 | 9-axis IMU  | accel_x/y/z, gyro_x/y/z         |
+| BME280  | Environment | temperature, humidity, pressure |
 
 Or use the Python API:
 
