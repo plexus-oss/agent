@@ -168,7 +168,12 @@ class PlexusConnector:
         async def stream_loop():
             try:
                 while stream_id in self._active_streams:
-                    readings = self.sensor_hub.read(metrics if metrics else None)
+                    all_readings = self.sensor_hub.read_all()
+                    # Filter by requested metrics if specified
+                    if metrics:
+                        readings = [r for r in all_readings if r.metric in metrics]
+                    else:
+                        readings = all_readings
                     points = [
                         {
                             "metric": r.metric,

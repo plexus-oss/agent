@@ -27,5 +27,5 @@ Auto-Detection:
 from plexus.client import Plexus
 from plexus.config import load_config, save_config
 
-__version__ = "0.3.4"
+__version__ = "0.3.5"
 __all__ = ["Plexus", "load_config", "save_config"]
