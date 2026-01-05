@@ -319,12 +319,14 @@ def run_connector(
     api_key: Optional[str] = None,
     endpoint: Optional[str] = None,
     on_status: Optional[Callable[[str], None]] = None,
+    sensor_hub: Optional["SensorHub"] = None,
 ):
     """Run the connector (blocking)."""
     connector = PlexusConnector(
         api_key=api_key,
         endpoint=endpoint,
         on_status=on_status,
+        sensor_hub=sensor_hub,
     )
 
     try:

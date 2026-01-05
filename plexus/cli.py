@@ -424,12 +424,15 @@ def config():
 
 
 @main.command()
-def connect():
+@click.option("--no-sensors", is_flag=True, help="Disable sensor auto-detection")
+@click.option("--bus", "-b", default=1, type=int, help="I2C bus number for sensors")
+def connect(no_sensors: bool, bus: int):
     """
-    Connect to Plexus for remote terminal access.
+    Connect to Plexus for remote terminal access and sensor streaming.
 
     This opens a persistent connection to the Plexus server, allowing
-    you to run commands on this machine from the web UI.
+    you to run commands on this machine from the web UI and stream
+    sensor data.
 
     Example:
 
@@ -449,6 +452,25 @@ def connect():
     click.echo("─" * 40)
     click.echo(f"  Device ID: {device_id}")
     click.echo(f"  Endpoint:  {endpoint}")
+
+    # Auto-detect sensors
+    sensor_hub = None
+    if not no_sensors:
+        try:
+            from plexus.sensors import scan_sensors, auto_sensors
+            sensors = scan_sensors(bus)
+            if sensors:
+                sensor_hub = auto_sensors(bus=bus)
+                click.echo(f"  Sensors:   {len(sensors)} detected")
+                for s in sensors:
+                    click.echo(f"             - {s.name} @ 0x{s.address:02X}")
+            else:
+                click.echo("  Sensors:   None detected")
+        except ImportError:
+            click.echo("  Sensors:   Not available (install smbus2)")
+        except Exception as e:
+            click.echo(f"  Sensors:   Error detecting ({e})")
+
     click.echo("─" * 40)
 
     def status_callback(msg: str):
@@ -457,7 +479,7 @@ def connect():
     click.echo("\n  Press Ctrl+C to disconnect\n")
 
     try:
-        run_connector(api_key=api_key, endpoint=endpoint, on_status=status_callback)
+        run_connector(api_key=api_key, endpoint=endpoint, on_status=status_callback, sensor_hub=sensor_hub)
     except KeyboardInterrupt:
         click.echo("\n  Disconnected.")
 
