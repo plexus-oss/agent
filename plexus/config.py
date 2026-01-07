@@ -73,7 +73,14 @@ def get_device_token() -> Optional[str]:
 
 def get_endpoint() -> str:
     """Get the API endpoint URL."""
-    return PLEXUS_ENDPOINT
+    # Environment variable takes precedence
+    env_endpoint = os.environ.get("PLEXUS_ENDPOINT")
+    if env_endpoint:
+        return env_endpoint
+
+    # Check config file
+    config = load_config()
+    return config.get("endpoint", PLEXUS_ENDPOINT)
 
 
 def get_device_id() -> Optional[str]:

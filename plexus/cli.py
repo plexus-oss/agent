@@ -211,6 +211,8 @@ def pair(code: Optional[str]):
                         config["org_id"] = data["org_id"]
                     if data.get("device_name"):
                         config["device_name"] = data["device_name"]
+                    # Store endpoint for API calls
+                    config["endpoint"] = data.get("endpoint", base_endpoint)
 
                     save_config(config)
 
