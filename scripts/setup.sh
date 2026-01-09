@@ -75,6 +75,24 @@ fi
 
 PYTHON_VERSION=$($PYTHON --version 2>&1 | cut -d' ' -f2)
 echo -e "  Python:  ${CYAN}$PYTHON_VERSION${NC}"
+
+# Check if python3-venv is available (needed for virtual environments on Debian)
+if [ "$OS" = "Linux" ] && ! $PYTHON -c "import venv" 2>/dev/null; then
+    echo ""
+    echo -e "  ${YELLOW}Installing python3-venv...${NC}"
+    if [ "$EUID" -eq 0 ]; then
+        apt-get update -qq && apt-get install -y -qq python3-venv
+    elif sudo -n true 2>/dev/null; then
+        sudo apt-get update -qq && sudo apt-get install -y -qq python3-venv
+    else
+        echo -e "  ${RED}Error: python3-venv is required but not installed${NC}"
+        echo ""
+        echo "  Please run: sudo apt install python3-venv"
+        echo ""
+        exit 1
+    fi
+fi
+
 echo ""
 
 # Step 1: Install plexus-agent
@@ -83,21 +101,75 @@ echo ""
 echo "  Installing Plexus agent..."
 echo ""
 
-# Use pip to install
-if command -v pip3 &> /dev/null; then
-    PIP=pip3
-elif command -v pip &> /dev/null; then
-    PIP=pip
-else
-    PIP="$PYTHON -m pip"
+# Use a virtual environment to avoid PEP 668 issues on modern Debian/Ubuntu
+VENV_DIR="/opt/plexus/venv"
+PLEXUS_BIN_DIR="/opt/plexus/bin"
+
+# Create directories (may need sudo on Linux)
+if [ "$OS" = "Linux" ]; then
+    if [ "$EUID" -eq 0 ]; then
+        mkdir -p /opt/plexus
+    elif sudo -n true 2>/dev/null; then
+        sudo mkdir -p /opt/plexus
+        sudo chown $USER:$USER /opt/plexus
+    else
+        # Fall back to user directory if no sudo
+        VENV_DIR="$HOME/.plexus/venv"
+        PLEXUS_BIN_DIR="$HOME/.plexus/bin"
+        mkdir -p "$HOME/.plexus"
+    fi
 fi
+
+# Create virtual environment if it doesn't exist
+if [ ! -d "$VENV_DIR" ]; then
+    echo "  Creating virtual environment..."
+    $PYTHON -m venv "$VENV_DIR"
+fi
+
+# Activate venv and install
+VENV_PIP="$VENV_DIR/bin/pip"
 
 # Install with sensor support by default on Linux (likely Raspberry Pi)
 if [ "$OS" = "Linux" ]; then
-    $PIP install --upgrade plexus-agent[sensors] --quiet 2>/dev/null || \
-    $PIP install --upgrade plexus-agent --quiet
+    "$VENV_PIP" install --upgrade pip --quiet
+    "$VENV_PIP" install --upgrade plexus-agent[sensors] --quiet 2>/dev/null || \
+    "$VENV_PIP" install --upgrade plexus-agent --quiet
 else
-    $PIP install --upgrade plexus-agent --quiet
+    # macOS/other - use system pip or venv
+    if [ -f "$VENV_PIP" ]; then
+        "$VENV_PIP" install --upgrade pip --quiet
+        "$VENV_PIP" install --upgrade plexus-agent --quiet
+    else
+        # Fall back to system pip on macOS
+        pip3 install --upgrade plexus-agent --quiet 2>/dev/null || \
+        $PYTHON -m pip install --upgrade plexus-agent --quiet
+    fi
+fi
+
+# Create symlink so 'plexus' command is available system-wide
+VENV_PLEXUS="$VENV_DIR/bin/plexus"
+if [ -f "$VENV_PLEXUS" ]; then
+    mkdir -p "$PLEXUS_BIN_DIR"
+    ln -sf "$VENV_PLEXUS" "$PLEXUS_BIN_DIR/plexus"
+
+    # Add to PATH via profile if not already there
+    if [ "$OS" = "Linux" ]; then
+        PROFILE_FILE="$HOME/.bashrc"
+        if ! grep -q "$PLEXUS_BIN_DIR" "$PROFILE_FILE" 2>/dev/null; then
+            echo "" >> "$PROFILE_FILE"
+            echo "# Plexus agent" >> "$PROFILE_FILE"
+            echo "export PATH=\"$PLEXUS_BIN_DIR:\$PATH\"" >> "$PROFILE_FILE"
+        fi
+        # Also add to current session
+        export PATH="$PLEXUS_BIN_DIR:$PATH"
+
+        # Create /usr/local/bin symlink if we have sudo
+        if [ "$EUID" -eq 0 ]; then
+            ln -sf "$VENV_PLEXUS" /usr/local/bin/plexus
+        elif sudo -n true 2>/dev/null; then
+            sudo ln -sf "$VENV_PLEXUS" /usr/local/bin/plexus
+        fi
+    fi
 fi
 
 echo -e "  ${GREEN}✓ Installed${NC}"
@@ -149,8 +221,14 @@ if [ "$OS" = "Linux" ] && [ "$SKIP_SERVICE" = false ]; then
     PLEXUS_USER=${SUDO_USER:-$USER}
     PLEXUS_HOME=$(eval echo ~$PLEXUS_USER)
 
-    # Find plexus binary location
-    PLEXUS_BIN=$(which plexus 2>/dev/null || echo "/usr/local/bin/plexus")
+    # Find plexus binary location (prefer venv path)
+    if [ -f "$VENV_PLEXUS" ]; then
+        PLEXUS_BIN="$VENV_PLEXUS"
+    elif [ -f "/opt/plexus/venv/bin/plexus" ]; then
+        PLEXUS_BIN="/opt/plexus/venv/bin/plexus"
+    else
+        PLEXUS_BIN=$(which plexus 2>/dev/null || echo "/usr/local/bin/plexus")
+    fi
 
     # Create systemd service file
     SERVICE_FILE="/etc/systemd/system/plexus.service"
