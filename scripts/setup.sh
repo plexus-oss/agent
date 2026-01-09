@@ -8,9 +8,7 @@
 #
 # This script:
 #   1. Installs the Plexus agent
-#   2. Pairs the device with your account
-#   3. Sets up auto-start on boot (systemd)
-#   4. Starts the agent
+#   2. Pairs the device with your account (if code provided)
 #
 
 set -e
@@ -25,7 +23,6 @@ NC='\033[0m' # No Color
 # Parse arguments
 PAIRING_CODE=""
 DEVICE_NAME=""
-SKIP_SERVICE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -36,10 +33,6 @@ while [[ $# -gt 0 ]]; do
         --name|-n)
             DEVICE_NAME="$2"
             shift 2
-            ;;
-        --no-service)
-            SKIP_SERVICE=true
-            shift
             ;;
         *)
             shift
@@ -206,90 +199,6 @@ else
         echo ""
     else
         echo "  Skipping pairing for now..."
-        echo ""
-    fi
-fi
-
-# Step 3: Set up systemd service (Linux only)
-if [ "$OS" = "Linux" ] && [ "$SKIP_SERVICE" = false ]; then
-    echo "─────────────────────────────────────────"
-    echo ""
-    echo "  Setting up auto-start service..."
-    echo ""
-
-    # Determine the user
-    PLEXUS_USER=${SUDO_USER:-$USER}
-    PLEXUS_HOME=$(eval echo ~$PLEXUS_USER)
-
-    # Find plexus binary location (prefer venv path)
-    if [ -f "$VENV_PLEXUS" ]; then
-        PLEXUS_BIN="$VENV_PLEXUS"
-    elif [ -f "/opt/plexus/venv/bin/plexus" ]; then
-        PLEXUS_BIN="/opt/plexus/venv/bin/plexus"
-    else
-        PLEXUS_BIN=$(which plexus 2>/dev/null || echo "/usr/local/bin/plexus")
-    fi
-
-    # Create systemd service file
-    SERVICE_FILE="/etc/systemd/system/plexus.service"
-
-    # Check if we have sudo access
-    if [ "$EUID" -eq 0 ] || sudo -n true 2>/dev/null; then
-        sudo tee $SERVICE_FILE > /dev/null << EOF
-[Unit]
-Description=Plexus Agent
-Documentation=https://docs.plexus.company
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=$PLEXUS_USER
-ExecStart=$PLEXUS_BIN run
-Restart=always
-RestartSec=10
-Environment=PLEXUS_CONFIG_DIR=$PLEXUS_HOME/.plexus
-
-# Logging
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=plexus
-
-# Security hardening
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=$PLEXUS_HOME/.plexus
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-        # Reload systemd and enable service
-        sudo systemctl daemon-reload
-        sudo systemctl enable plexus.service
-
-        echo -e "  ${GREEN}✓ Service installed${NC}"
-        echo ""
-        echo "  Service commands:"
-        echo "    sudo systemctl start plexus    # Start now"
-        echo "    sudo systemctl stop plexus     # Stop"
-        echo "    sudo systemctl status plexus   # Check status"
-        echo "    journalctl -u plexus -f        # View logs"
-        echo ""
-
-        # Start the service if device is paired
-        if plexus status 2>/dev/null | grep -q "Connected"; then
-            echo "  Starting service..."
-            sudo systemctl start plexus.service
-            echo -e "  ${GREEN}✓ Service started${NC}"
-            echo ""
-        fi
-    else
-        echo -e "  ${YELLOW}Skipping service setup (no sudo access)${NC}"
-        echo ""
-        echo "  To set up auto-start manually, run with sudo:"
-        echo "    curl -sL https://app.plexus.company/setup | sudo bash"
         echo ""
     fi
 fi

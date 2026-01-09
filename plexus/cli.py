@@ -4,7 +4,7 @@ Command-line interface for Plexus Agent.
 Simplified CLI - all device control happens through the web UI.
 
 Usage:
-    plexus run                     # Start agent daemon (primary command)
+    plexus run                     # Start the agent
     plexus pair                    # Pair device with web dashboard
     plexus status                  # Check connection status
     plexus scan                    # List detected sensors
@@ -39,7 +39,7 @@ def main():
     Quick start:
 
         plexus pair                    # Pair with dashboard (one-time)
-        plexus run                     # Start agent daemon
+        plexus run                     # Start the agent
 
     All device control happens through the web dashboard at:
     https://app.plexus.company
@@ -53,17 +53,16 @@ def main():
 @click.option("--bus", "-b", default=1, type=int, help="I2C bus number for sensors")
 def run(name: Optional[str], no_sensors: bool, bus: int):
     """
-    Start Plexus agent in daemon mode.
+    Start the Plexus agent.
 
     Connects to Plexus and waits for commands from the web dashboard.
     All device control (streaming, sessions, commands) happens through the UI.
 
-    This is the primary way to run the agent. Typically set up as a
-    systemd service to start on boot.
+    Press Ctrl+C to stop.
 
     Examples:
 
-        plexus run                     # Start daemon
+        plexus run                     # Start the agent
         plexus run --name "robot-01"   # With custom name
         plexus run --no-sensors        # Without sensor detection
     """
