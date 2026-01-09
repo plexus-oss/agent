@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
 
-from plexus.config import get_api_key, get_device_id, get_endpoint, require_login
+from plexus.config import get_api_key, get_source_id, get_endpoint, require_login
 
 # Flexible value type - supports any JSON-serializable value
 FlexValue = Union[int, float, str, bool, Dict[str, Any], List[Any]]
@@ -65,7 +65,7 @@ class Plexus:
         api_key: Your Plexus API key. If not provided, reads from
                  PLEXUS_API_KEY env var or ~/.plexus/config.json
         endpoint: API endpoint URL. Defaults to https://app.plexus.company
-        device_id: Unique identifier for this device. Auto-generated if not provided.
+        source_id: Unique identifier for this source. Auto-generated if not provided.
         timeout: Request timeout in seconds. Default 10s.
 
     Raises:
@@ -76,7 +76,7 @@ class Plexus:
         self,
         api_key: Optional[str] = None,
         endpoint: Optional[str] = None,
-        device_id: Optional[str] = None,
+        source_id: Optional[str] = None,
         timeout: float = 10.0,
     ):
         self.api_key = api_key or get_api_key()
@@ -86,7 +86,7 @@ class Plexus:
             require_login()
 
         self.endpoint = (endpoint or get_endpoint()).rstrip("/")
-        self.device_id = device_id or get_device_id()
+        self.source_id = source_id or get_source_id()
         self.timeout = timeout
 
         self._session_id: Optional[str] = None
@@ -126,7 +126,7 @@ class Plexus:
             "metric": metric,
             "value": value,
             "timestamp": timestamp or time.time(),
-            "device_id": self.device_id,
+            "source_id": self.source_id,
         }
         if tags:
             point["tags"] = tags
@@ -256,7 +256,7 @@ class Plexus:
                 f"{self.endpoint}/api/sessions",
                 json={
                     "session_id": session_id,
-                    "device_id": self.device_id,
+                    "source_id": self.source_id,
                     "status": "started",
                     "tags": tags,
                     "timestamp": time.time(),
@@ -275,7 +275,7 @@ class Plexus:
                     f"{self.endpoint}/api/sessions",
                     json={
                         "session_id": session_id,
-                        "device_id": self.device_id,
+                        "source_id": self.source_id,
                         "status": "ended",
                         "timestamp": time.time(),
                     },

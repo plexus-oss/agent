@@ -14,7 +14,7 @@ def test_version():
 def test_default_config():
     """Default config should have expected keys."""
     assert "api_key" in DEFAULT_CONFIG
-    assert "device_id" in DEFAULT_CONFIG
+    assert "source_id" in DEFAULT_CONFIG
 
 
 def test_client_init():
@@ -32,7 +32,7 @@ def test_make_point():
     assert point["metric"] == "temperature"
     assert point["value"] == 72.5
     assert "timestamp" in point
-    assert "device_id" in point
+    assert "source_id" in point
 
 
 def test_make_point_with_tags():

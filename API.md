@@ -13,7 +13,7 @@ Send telemetry data to Plexus using HTTP or WebSocket.
 │   app.plexus.company                     plexus-realtime.partykit.dev    │
 │   ├── /api/ingest           POST         ├── Device connections          │
 │   ├── /api/sessions         POST/PATCH   ├── Browser connections         │
-│   ├── /api/devices/pair     POST/GET     └── Real-time relay             │
+│   ├── /api/sources/pair     POST/GET     └── Real-time relay             │
 │   ├── /api/auth/verify-key  GET                                          │
 │   └── /api/auth/verify-device POST       (Device token verification)     │
 │                                                                          │
@@ -62,7 +62,7 @@ curl -X POST https://app.plexus.company/api/ingest \
       "metric": "temperature",
       "value": 72.5,
       "timestamp": 1699900000,
-      "device_id": "sensor-001"
+      "source_id": "sensor-001"
     }]
   }'
 ```
@@ -71,10 +71,10 @@ curl -X POST https://app.plexus.company/api/ingest \
 
 Plexus uses two types of credentials:
 
-| Type          | Prefix   | Use Case                                    |
-| ------------- | -------- | ------------------------------------------- |
-| Device Token  | `plxd_`  | WebSocket connections (agent `plexus run`)  |
-| API Key       | `plx_`   | Direct HTTP access (scripts, embedded IoT)  |
+| Type         | Prefix  | Use Case                                   |
+| ------------ | ------- | ------------------------------------------ |
+| Device Token | `plxd_` | WebSocket connections (agent `plexus run`) |
+| API Key      | `plx_`  | Direct HTTP access (scripts, embedded IoT) |
 
 ### Getting a Device Token
 
@@ -114,7 +114,7 @@ x-api-key: plx_xxxxx
       "metric": "temperature",
       "value": 72.5,
       "timestamp": 1699900000.123,
-      "device_id": "sensor-001",
+      "source_id": "sensor-001",
       "tags": { "location": "lab" },
       "session_id": "test-001"
     }
@@ -127,7 +127,7 @@ x-api-key: plx_xxxxx
 | `metric`     | string | Yes      | Metric name (e.g., `temperature`, `motor.rpm`) |
 | `value`      | any    | Yes      | See supported value types below                |
 | `timestamp`  | float  | No       | Unix timestamp (seconds). Defaults to now      |
-| `device_id`  | string | Yes      | Your device identifier                         |
+| `source_id`  | string | Yes      | Your source identifier                         |
 | `tags`       | object | No       | Key-value labels                               |
 | `session_id` | string | No       | Group data into sessions                       |
 
@@ -152,7 +152,7 @@ POST /api/sessions
 {
   "session_id": "test-001",
   "name": "Motor Test Run",
-  "device_id": "sensor-001",
+  "source_id": "sensor-001",
   "status": "active"
 }
 ```
@@ -187,7 +187,7 @@ Devices authenticate using a device token (from pairing) or API key (legacy):
 {
   "type": "device_auth",
   "device_token": "plxd_xxxxx",
-  "device_id": "my-device-001",
+  "source_id": "my-device-001",
   "platform": "Linux",
   "sensors": [
     {
@@ -205,7 +205,7 @@ Devices authenticate using a device token (from pairing) or API key (legacy):
 {
   "type": "device_auth",
   "api_key": "plx_xxxxx",
-  "device_id": "my-device-001",
+  "source_id": "my-device-001",
   "platform": "Linux",
   "sensors": []
 }
@@ -213,32 +213,32 @@ Devices authenticate using a device token (from pairing) or API key (legacy):
 // Server → Device
 {
   "type": "authenticated",
-  "device_id": "my-device-001"
+  "source_id": "my-device-001"
 }
 ```
 
 ### Message Types (Dashboard → Device)
 
-| Type            | Description                       |
-| --------------- | --------------------------------- |
-| `start_stream`  | Start streaming sensor data       |
-| `stop_stream`   | Stop streaming                    |
-| `start_session` | Start recording to a session      |
-| `stop_session`  | Stop recording                    |
+| Type            | Description                          |
+| --------------- | ------------------------------------ |
+| `start_stream`  | Start streaming sensor data          |
+| `stop_stream`   | Stop streaming                       |
+| `start_session` | Start recording to a session         |
+| `stop_session`  | Stop recording                       |
 | `configure`     | Configure sensor (e.g., sample rate) |
-| `execute`       | Run a shell command               |
-| `cancel`        | Cancel running command            |
-| `ping`          | Keepalive request                 |
+| `execute`       | Run a shell command                  |
+| `cancel`        | Cancel running command               |
+| `ping`          | Keepalive request                    |
 
 ### Message Types (Device → Dashboard)
 
-| Type              | Description              |
-| ----------------- | ------------------------ |
-| `telemetry`       | Sensor data points       |
-| `session_started` | Confirm session started  |
-| `session_stopped` | Confirm session stopped  |
-| `output`          | Command output           |
-| `pong`            | Keepalive response       |
+| Type              | Description             |
+| ----------------- | ----------------------- |
+| `telemetry`       | Sensor data points      |
+| `session_started` | Confirm session started |
+| `session_stopped` | Confirm session stopped |
+| `output`          | Command output          |
+| `pong`            | Keepalive response      |
 
 ### Start Streaming
 
@@ -246,7 +246,7 @@ Devices authenticate using a device token (from pairing) or API key (legacy):
 // Dashboard → Device
 {
   "type": "start_stream",
-  "device_id": "my-device-001",
+  "source_id": "my-device-001",
   "metrics": ["accel_x", "accel_y", "accel_z"],
   "interval_ms": 100
 }
@@ -268,7 +268,7 @@ Devices authenticate using a device token (from pairing) or API key (legacy):
 // Dashboard → Device
 {
   "type": "start_session",
-  "device_id": "my-device-001",
+  "source_id": "my-device-001",
   "session_id": "session_1699900000_abc123",
   "session_name": "Motor Test",
   "metrics": [],
@@ -303,7 +303,7 @@ Devices authenticate using a device token (from pairing) or API key (legacy):
 // Dashboard → Device
 {
   "type": "configure",
-  "device_id": "my-device-001",
+  "source_id": "my-device-001",
   "sensor": "MPU6050",
   "config": {
     "sample_rate": 50
@@ -343,7 +343,7 @@ requests.post(
             "metric": "temperature",
             "value": 72.5,
             "timestamp": time.time(),
-            "device_id": "sensor-001"
+            "source_id": "sensor-001"
         }]
     }
 )
@@ -364,7 +364,7 @@ await fetch("https://app.plexus.company/api/ingest", {
         metric: "temperature",
         value: 72.5,
         timestamp: Date.now() / 1000,
-        device_id: "sensor-001",
+        source_id: "sensor-001",
       },
     ],
   }),
@@ -389,7 +389,7 @@ func main() {
             "metric":    "temperature",
             "value":     72.5,
             "timestamp": float64(time.Now().Unix()),
-            "device_id": "sensor-001",
+            "source_id": "sensor-001",
         }},
     }
 
@@ -418,7 +418,7 @@ void sendToPlexus(const char* metric, float value) {
     payload += "\"metric\":\"" + String(metric) + "\",";
     payload += "\"value\":" + String(value) + ",";
     payload += "\"timestamp\":" + String(millis() / 1000.0) + ",";
-    payload += "\"device_id\":\"esp32-001\"";
+    payload += "\"source_id\":\"esp32-001\"";
     payload += "}]}";
 
     http.POST(payload);
@@ -431,7 +431,7 @@ void sendToPlexus(const char* metric, float value) {
 ```bash
 #!/bin/bash
 API_KEY="plx_xxxxx"
-DEVICE_ID="sensor-001"
+SOURCE_ID="sensor-001"
 
 curl -X POST https://app.plexus.company/api/ingest \
   -H "x-api-key: $API_KEY" \
@@ -441,7 +441,7 @@ curl -X POST https://app.plexus.company/api/ingest \
       \"metric\": \"temperature\",
       \"value\": 72.5,
       \"timestamp\": $(date +%s),
-      \"device_id\": \"$DEVICE_ID\"
+      \"source_id\": \"$SOURCE_ID\"
     }]
   }"
 ```
@@ -482,20 +482,20 @@ class MySensor(BaseSensor):
 
 ## Errors
 
-| Status | Meaning                         |
-| ------ | ------------------------------- |
-| 200    | Success                         |
-| 400    | Bad request (check JSON format) |
-| 401    | Invalid or missing API key      |
-| 403    | API key lacks permissions       |
-| 404    | Resource not found              |
+| Status | Meaning                               |
+| ------ | ------------------------------------- |
+| 200    | Success                               |
+| 400    | Bad request (check JSON format)       |
+| 401    | Invalid or missing API key            |
+| 403    | API key lacks permissions             |
+| 404    | Resource not found                    |
 | 410    | Resource expired (e.g., pairing code) |
 
 ## Best Practices
 
 - **Batch points** - Send up to 100 points per request for HTTP
 - **Use timestamps** - Always include accurate timestamps
-- **Consistent device_id** - Use the same ID for each physical device
+- **Consistent source_id** - Use the same ID for each physical device/source
 - **Use tags** - Label data for filtering (e.g., `{"location": "lab"}`)
 - **Use sessions** - Group related data for easier analysis
 - **Prefer WebSocket** - For real-time UI-controlled devices, use `plexus run`

@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS telemetry (
   metric TEXT NOT NULL,
   value DOUBLE PRECISION NOT NULL,
   timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  device_id TEXT,
+  source_id TEXT,
   session_id TEXT,
   tags JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS telemetry (
 -- Indexes for efficient queries
 CREATE INDEX IF NOT EXISTS idx_telemetry_org_metric_time ON telemetry(org_id, metric, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_telemetry_org_time ON telemetry(org_id, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_telemetry_device ON telemetry(device_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_telemetry_source ON telemetry(source_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_telemetry_session ON telemetry(session_id, timestamp DESC);
 
 -- Sessions table
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   org_id TEXT NOT NULL DEFAULT 'default',
   session_id TEXT NOT NULL,
-  device_id TEXT,
+  source_id TEXT,
   started_at TIMESTAMPTZ DEFAULT NOW(),
   ended_at TIMESTAMPTZ,
   status TEXT DEFAULT 'active',

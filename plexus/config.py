@@ -17,7 +17,7 @@ PLEXUS_ENDPOINT = "https://app.plexus.company"
 DEFAULT_CONFIG = {
     "api_key": None,
     "device_token": None,  # New: device token from pairing
-    "device_id": None,
+    "source_id": None,
     "org_id": None,
 }
 
@@ -83,18 +83,18 @@ def get_endpoint() -> str:
     return config.get("endpoint", PLEXUS_ENDPOINT)
 
 
-def get_device_id() -> Optional[str]:
-    """Get the device ID, generating one if not set."""
+def get_source_id() -> Optional[str]:
+    """Get the source ID, generating one if not set."""
     config = load_config()
-    device_id = config.get("device_id")
+    source_id = config.get("source_id")
 
-    if not device_id:
+    if not source_id:
         import uuid
-        device_id = f"device-{uuid.uuid4().hex[:8]}"
-        config["device_id"] = device_id
+        source_id = f"source-{uuid.uuid4().hex[:8]}"
+        config["source_id"] = source_id
         save_config(config)
 
-    return device_id
+    return source_id
 
 
 def get_org_id() -> Optional[str]:

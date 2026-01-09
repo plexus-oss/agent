@@ -24,7 +24,7 @@ from plexus.config import (
     get_api_key,
     get_device_token,
     get_endpoint,
-    get_device_id,
+    get_source_id,
     get_config_path,
     is_logged_in,
 )
@@ -81,12 +81,12 @@ def run(name: Optional[str], no_sensors: bool, bus: int):
         sys.exit(1)
 
     endpoint = get_endpoint()
-    device_id = get_device_id()
+    source_id = get_source_id()
 
-    # Update device name if provided
+    # Update source name if provided
     if name:
         config = load_config()
-        config["device_name"] = name
+        config["source_name"] = name
         save_config(config)
 
     # Clear, minimal startup banner
@@ -95,7 +95,7 @@ def run(name: Optional[str], no_sensors: bool, bus: int):
     click.echo("│  Plexus Agent                           │")
     click.echo("└─────────────────────────────────────────┘")
     click.echo()
-    click.echo(f"  Device:    {name or device_id}")
+    click.echo(f"  Source:    {name or source_id}")
     click.echo(f"  Dashboard: {endpoint}")
 
     # Auto-detect sensors
@@ -183,7 +183,7 @@ def pair(code: Optional[str]):
         try:
             import requests
             response = requests.post(
-                f"{base_endpoint}/api/devices/pair/complete",
+                f"{base_endpoint}/api/sources/pair/complete",
                 headers={"Content-Type": "application/json"},
                 json={"code": code.upper().strip()},
                 timeout=30,
@@ -192,25 +192,25 @@ def pair(code: Optional[str]):
             if response.status_code == 200:
                 data = response.json()
                 device_token = data.get("device_token")
-                device_id = data.get("device_id")
+                source_id = data.get("source_id")
 
                 if device_token:
                     # Save credentials
                     config = load_config()
                     config["device_token"] = device_token
 
-                    # Use device_id from server, or generate if not present
-                    if device_id:
-                        config["device_id"] = device_id
-                    elif not config.get("device_id"):
+                    # Use source_id from server, or generate if not present
+                    if source_id:
+                        config["source_id"] = source_id
+                    elif not config.get("source_id"):
                         import uuid
-                        config["device_id"] = f"device-{uuid.uuid4().hex[:8]}"
+                        config["source_id"] = f"source-{uuid.uuid4().hex[:8]}"
 
                     # Store org info if provided
                     if data.get("org_id"):
                         config["org_id"] = data["org_id"]
-                    if data.get("device_name"):
-                        config["device_name"] = data["device_name"]
+                    if data.get("source_name"):
+                        config["source_name"] = data["source_name"]
                     # Store endpoint for API calls
                     config["endpoint"] = data.get("endpoint", base_endpoint)
 
@@ -317,10 +317,10 @@ def pair(code: Optional[str]):
                         config = load_config()
                         config["api_key"] = api_key
 
-                        # Generate device ID if not present
-                        if not config.get("device_id"):
+                        # Generate source ID if not present
+                        if not config.get("source_id"):
                             import uuid
-                            config["device_id"] = f"device-{uuid.uuid4().hex[:8]}"
+                            config["source_id"] = f"source-{uuid.uuid4().hex[:8]}"
 
                         save_config(config)
 
@@ -371,9 +371,9 @@ def status():
     """
     device_token = get_device_token()
     api_key = get_api_key()
-    device_id = get_device_id()
+    source_id = get_source_id()
     config = load_config()
-    device_name = config.get("device_name")
+    source_name = config.get("source_name")
 
     click.echo()
     click.echo("┌─────────────────────────────────────────┐")
@@ -381,9 +381,9 @@ def status():
     click.echo("└─────────────────────────────────────────┘")
     click.echo()
     click.echo(f"  Config:    {get_config_path()}")
-    click.echo(f"  Device ID: {device_id}")
-    if device_name:
-        click.echo(f"  Name:      {device_name}")
+    click.echo(f"  Source ID: {source_id}")
+    if source_name:
+        click.echo(f"  Name:      {source_name}")
     click.echo(f"  Endpoint:  {get_endpoint()}")
 
     if device_token:

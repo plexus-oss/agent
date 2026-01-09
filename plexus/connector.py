@@ -19,7 +19,7 @@ from typing import Optional, Callable, TYPE_CHECKING
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-from plexus.config import get_api_key, get_device_token, get_endpoint, get_device_id, get_org_id
+from plexus.config import get_api_key, get_device_token, get_endpoint, get_source_id, get_org_id
 
 if TYPE_CHECKING:
     from plexus.sensors.base import SensorHub
@@ -36,7 +36,7 @@ class PlexusConnector:
         api_key: Optional[str] = None,
         device_token: Optional[str] = None,
         endpoint: Optional[str] = None,
-        device_id: Optional[str] = None,
+        source_id: Optional[str] = None,
         org_id: Optional[str] = None,
         on_status: Optional[Callable[[str], None]] = None,
         sensor_hub: Optional["SensorHub"] = None,
@@ -45,7 +45,7 @@ class PlexusConnector:
         self.device_token = device_token or get_device_token()
         self.api_key = api_key or get_api_key()
         self.endpoint = (endpoint or get_endpoint()).rstrip("/")
-        self.device_id = device_id or get_device_id()
+        self.source_id = source_id or get_source_id()
         self.org_id = org_id or get_org_id() or "default"
         self.on_status = on_status or (lambda x: None)
         self.sensor_hub = sensor_hub
@@ -112,7 +112,7 @@ class PlexusConnector:
                     # Build auth message - prefer device_token over api_key
                     auth_msg = {
                         "type": "device_auth",
-                        "device_id": self.device_id,
+                        "source_id": self.source_id,
                         "platform": platform.system(),
                         "sensors": sensors_info,
                     }
@@ -150,7 +150,7 @@ class PlexusConnector:
             # Handle authentication response
             if msg_type == "authenticated":
                 self._authenticated = True
-                self.on_status(f"Connected! Device ID: {data.get('device_id')}")
+                self.on_status(f"Connected! Source ID: {data.get('source_id')}")
                 return
 
             if msg_type == "error":

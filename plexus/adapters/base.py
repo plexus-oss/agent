@@ -98,7 +98,7 @@ class Metric:
         value: The value - can be number, string, bool, dict, or list
         timestamp: Unix timestamp (seconds). If None, current time is used.
         tags: Optional key-value metadata
-        device_id: Optional device identifier
+        source_id: Optional source identifier
 
     Examples:
         Metric("temperature", 72.5)
@@ -110,7 +110,7 @@ class Metric:
     value: Union[int, float, str, bool, Dict[str, Any], List[Any]]
     timestamp: Optional[float] = None
     tags: Optional[Dict[str, str]] = None
-    device_id: Optional[str] = None
+    source_id: Optional[str] = None
 
     def __post_init__(self):
         if self.timestamp is None:
@@ -125,8 +125,8 @@ class Metric:
         }
         if self.tags:
             result["tags"] = self.tags
-        if self.device_id:
-            result["device_id"] = self.device_id
+        if self.source_id:
+            result["source_id"] = self.source_id
         return result
 
 
