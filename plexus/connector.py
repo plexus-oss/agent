@@ -8,6 +8,7 @@ Connects to the Plexus PartyKit server and allows:
 """
 
 import asyncio
+import base64
 import json
 import os
 import platform
@@ -23,6 +24,7 @@ from plexus.config import get_api_key, get_device_token, get_endpoint, get_sourc
 
 if TYPE_CHECKING:
     from plexus.sensors.base import SensorHub
+    from plexus.cameras.base import CameraHub
 
 
 class PlexusConnector:
@@ -40,6 +42,7 @@ class PlexusConnector:
         org_id: Optional[str] = None,
         on_status: Optional[Callable[[str], None]] = None,
         sensor_hub: Optional["SensorHub"] = None,
+        camera_hub: Optional["CameraHub"] = None,
     ):
         # Device token is preferred over API key (new pairing flow)
         self.device_token = device_token or get_device_token()
@@ -49,12 +52,14 @@ class PlexusConnector:
         self.org_id = org_id or get_org_id() or "default"
         self.on_status = on_status or (lambda x: None)
         self.sensor_hub = sensor_hub
+        self.camera_hub = camera_hub
 
         self._ws = None
         self._running = False
         self._authenticated = False
         self._current_process: Optional[subprocess.Popen] = None
         self._active_streams: dict[str, asyncio.Task] = {}
+        self._active_camera_streams: dict[str, asyncio.Task] = {}
         self._current_session: Optional[dict] = None  # {session_id, session_name}
 
     def _get_ws_url(self) -> str:
@@ -109,12 +114,18 @@ class PlexusConnector:
                     if self.sensor_hub:
                         sensors_info = self.sensor_hub.get_info()
 
+                    # Gather camera info if available
+                    cameras_info = []
+                    if self.camera_hub:
+                        cameras_info = self.camera_hub.get_info()
+
                     # Build auth message - prefer device_token over api_key
                     auth_msg = {
                         "type": "device_auth",
                         "source_id": self.source_id,
                         "platform": platform.system(),
                         "sensors": sensors_info,
+                        "cameras": cameras_info,
                     }
                     if self.device_token:
                         auth_msg["device_token"] = self.device_token
@@ -177,6 +188,12 @@ class PlexusConnector:
                 await self._start_session(data)
             elif msg_type == "stop_session":
                 await self._stop_session(data)
+            elif msg_type == "start_camera":
+                await self._start_camera_stream(data)
+            elif msg_type == "stop_camera":
+                await self._stop_camera_stream(data)
+            elif msg_type == "configure_camera":
+                await self._configure_camera(data)
 
         except json.JSONDecodeError:
             self.on_status(f"Invalid message: {message}")
@@ -339,6 +356,107 @@ class PlexusConnector:
             "session_id": session_id,
         }))
 
+    async def _start_camera_stream(self, data: dict):
+        """Start streaming video frames from a camera."""
+        camera_id = data.get("camera_id")
+        frame_rate = data.get("frame_rate", 10)
+        resolution = data.get("resolution")
+        quality = data.get("quality")
+
+        if not self.camera_hub:
+            self.on_status("No camera hub configured - cannot stream video")
+            await self._ws.send(json.dumps({
+                "type": "error",
+                "message": "No cameras configured on this device",
+            }))
+            return
+
+        camera = self.camera_hub.get_camera(camera_id)
+        if not camera:
+            self.on_status(f"Camera not found: {camera_id}")
+            await self._ws.send(json.dumps({
+                "type": "error",
+                "message": f"Camera not found: {camera_id}",
+            }))
+            return
+
+        # Apply configuration if provided
+        if resolution:
+            camera.resolution = tuple(resolution)
+        if quality:
+            camera.quality = quality
+        camera.frame_rate = frame_rate
+
+        self.on_status(f"Starting camera stream: {camera_id} @ {frame_rate}fps")
+
+        async def camera_stream_loop():
+            interval = 1.0 / frame_rate
+            try:
+                # Initialize camera
+                camera.setup()
+
+                while camera_id in self._active_camera_streams:
+                    frame = camera.capture()
+                    if frame:
+                        # Base64 encode the JPEG data
+                        frame_b64 = base64.b64encode(frame.data).decode('ascii')
+
+                        await self._ws.send(json.dumps({
+                            "type": "video_frame",
+                            "camera_id": camera_id,
+                            "frame": frame_b64,
+                            "width": frame.width,
+                            "height": frame.height,
+                            "timestamp": int(frame.timestamp * 1000),
+                            "tags": frame.tags,
+                        }))
+                    await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                self.on_status(f"Camera stream error: {e}")
+            finally:
+                camera.cleanup()
+
+        task = asyncio.create_task(camera_stream_loop())
+        self._active_camera_streams[camera_id] = task
+
+    async def _stop_camera_stream(self, data: dict):
+        """Stop a running camera stream."""
+        camera_id = data.get("camera_id")
+
+        if camera_id == "*":
+            # Stop all camera streams
+            for task in self._active_camera_streams.values():
+                task.cancel()
+            self._active_camera_streams.clear()
+            self.on_status("Stopped all camera streams")
+        elif camera_id in self._active_camera_streams:
+            self._active_camera_streams[camera_id].cancel()
+            del self._active_camera_streams[camera_id]
+            self.on_status(f"Stopped camera stream: {camera_id}")
+
+    async def _configure_camera(self, data: dict):
+        """Configure a camera on this device."""
+        camera_id = data.get("camera_id")
+        config = data.get("config", {})
+
+        if not self.camera_hub:
+            return
+
+        camera = self.camera_hub.get_camera(camera_id)
+        if camera:
+            try:
+                if "resolution" in config:
+                    camera.resolution = tuple(config["resolution"])
+                if "quality" in config:
+                    camera.quality = config["quality"]
+                if "frame_rate" in config:
+                    camera.frame_rate = config["frame_rate"]
+                self.on_status(f"Configured camera {camera_id}: {config}")
+            except Exception as e:
+                self.on_status(f"Failed to configure camera {camera_id}: {e}")
+
     async def _execute_command(self, data: dict):
         """Execute a shell command and stream output back."""
         command = data.get("command", "")
@@ -421,6 +539,9 @@ class PlexusConnector:
         for task in self._active_streams.values():
             task.cancel()
         self._active_streams.clear()
+        for task in self._active_camera_streams.values():
+            task.cancel()
+        self._active_camera_streams.clear()
         self._ws = None
 
 
@@ -430,6 +551,7 @@ def run_connector(
     endpoint: Optional[str] = None,
     on_status: Optional[Callable[[str], None]] = None,
     sensor_hub: Optional["SensorHub"] = None,
+    camera_hub: Optional["CameraHub"] = None,
 ):
     """Run the connector (blocking)."""
     connector = PlexusConnector(
@@ -438,6 +560,7 @@ def run_connector(
         endpoint=endpoint,
         on_status=on_status,
         sensor_hub=sensor_hub,
+        camera_hub=camera_hub,
     )
 
     try:

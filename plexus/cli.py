@@ -50,8 +50,9 @@ def main():
 @main.command()
 @click.option("--name", "-n", help="Device name for identification")
 @click.option("--no-sensors", is_flag=True, help="Disable sensor auto-detection")
+@click.option("--no-cameras", is_flag=True, help="Disable camera auto-detection")
 @click.option("--bus", "-b", default=1, type=int, help="I2C bus number for sensors")
-def run(name: Optional[str], no_sensors: bool, bus: int):
+def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
     """
     Start the Plexus agent.
 
@@ -65,6 +66,7 @@ def run(name: Optional[str], no_sensors: bool, bus: int):
         plexus run                     # Start the agent
         plexus run --name "robot-01"   # With custom name
         plexus run --no-sensors        # Without sensor detection
+        plexus run --no-cameras        # Without camera detection
     """
     from plexus.connector import run_connector
 
@@ -115,6 +117,24 @@ def run(name: Optional[str], no_sensors: bool, bus: int):
         except Exception as e:
             click.echo(f"  Sensors:   Error ({e})")
 
+    # Auto-detect cameras
+    camera_hub = None
+    if not no_cameras:
+        try:
+            from plexus.cameras import scan_cameras, auto_cameras
+            cameras = scan_cameras()
+            if cameras:
+                camera_hub = auto_cameras()
+                click.echo(f"  Cameras:   {len(cameras)} detected")
+                for c in cameras:
+                    click.echo(f"             • {c.name}")
+            else:
+                click.echo("  Cameras:   None detected")
+        except ImportError:
+            click.echo("  Cameras:   Not available (install opencv-python)")
+        except Exception as e:
+            click.echo(f"  Cameras:   Error ({e})")
+
     click.echo()
     click.echo("─" * 43)
     click.echo()
@@ -132,6 +152,7 @@ def run(name: Optional[str], no_sensors: bool, bus: int):
             endpoint=endpoint,
             on_status=status_callback,
             sensor_hub=sensor_hub,
+            camera_hub=camera_hub,
         )
     except KeyboardInterrupt:
         click.echo()
@@ -437,77 +458,75 @@ def status():
 @click.option("--all", "-a", "show_all", is_flag=True, help="Show all I2C addresses")
 def scan(bus: int, show_all: bool):
     """
-    Scan for connected sensors.
+    Scan for connected sensors and cameras.
 
-    Detects sensors on the I2C bus and shows what's available.
+    Detects sensors on the I2C bus and cameras connected to the device.
 
     Examples:
 
-        plexus scan                    # Scan for known sensors
+        plexus scan                    # Scan for sensors and cameras
         plexus scan -b 0               # Scan different I2C bus
         plexus scan --all              # Show all I2C addresses
     """
+    click.echo()
+    click.echo("Scanning for devices...")
+    click.echo("─" * 43)
+
+    # Scan for cameras
+    click.echo()
+    click.echo("  Cameras:")
+    try:
+        from plexus.cameras import scan_cameras
+        detected_cameras = scan_cameras()
+        if detected_cameras:
+            for c in detected_cameras:
+                click.secho(f"    • {c.name}", fg="green")
+                click.echo(f"      {c.description}")
+        else:
+            click.echo("    None detected")
+    except ImportError:
+        click.echo("    Not available (install opencv-python)")
+    except Exception as e:
+        click.echo(f"    Error: {e}")
+
+    # Scan for sensors
+    click.echo()
+    click.echo("  Sensors:")
     try:
         from plexus.sensors import scan_sensors, scan_i2c, get_sensor_info
-    except ImportError as e:
+    except ImportError:
+        click.echo("    Not available (install smbus2)")
         click.echo()
-        click.secho("Sensor support not available", fg="yellow")
-        click.echo()
-        click.echo("  Install with: pip install smbus2")
-        click.echo()
-        sys.exit(1)
-
-    click.echo()
-    click.echo(f"Scanning I2C bus {bus}...")
-    click.echo("─" * 43)
-    click.echo()
+        return
 
     if show_all:
         # Show all I2C addresses
         try:
             addresses = scan_i2c(bus)
             if addresses:
-                click.echo(f"  Found {len(addresses)} I2C device(s):")
-                click.echo()
+                click.echo(f"    I2C devices on bus {bus}:")
                 for addr in addresses:
-                    click.echo(f"    0x{addr:02X}")
-                click.echo()
+                    click.echo(f"      0x{addr:02X}")
             else:
-                click.secho("  No I2C devices found", fg="yellow")
-                click.echo()
+                click.echo(f"    No I2C devices on bus {bus}")
         except Exception as e:
-            click.secho(f"  Error scanning: {e}", fg="red")
-            click.echo()
+            click.echo(f"    Error: {e}")
+        click.echo()
         return
 
     # Scan for known sensors
     try:
         sensors = scan_sensors(bus)
-
         if sensors:
-            click.secho(f"  Found {len(sensors)} sensor(s):", fg="green")
-            click.echo()
             for s in sensors:
-                click.echo(f"  • {s.name}")
-                click.echo(f"    Address: 0x{s.address:02X}")
-                click.echo(f"    {s.description}")
-                click.echo()
+                click.secho(f"    • {s.name}", fg="green")
+                click.echo(f"      {s.description}")
         else:
-            click.secho("  No known sensors detected", fg="yellow")
-            click.echo()
-            click.echo("  Try 'plexus scan --all' to see all I2C addresses")
-            click.echo()
-            click.echo("  Supported sensors:")
-            for name, info in get_sensor_info().items():
-                click.echo(f"    • {name}: {info['description']}")
-            click.echo()
-
+            click.echo("    None detected")
     except Exception as e:
-        click.secho(f"  Error: {e}", fg="red")
-        click.echo()
-        click.echo("  Make sure I2C is enabled:")
-        click.echo("    sudo raspi-config  # Interface Options → I2C")
-        click.echo()
+        click.echo(f"    Error: {e}")
+
+    click.echo()
 
 
 # Keep 'connect' as hidden alias for backwards compatibility
