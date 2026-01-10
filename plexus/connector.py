@@ -218,10 +218,21 @@ class PlexusConnector:
 
         async def stream_loop():
             try:
+                # Strip source_id prefix from metrics for filtering
+                # Frontend sends "source_id:metric" but sensors report just "metric"
+                filter_metrics = set()
+                if metrics:
+                    for m in metrics:
+                        if ":" in m:
+                            # Extract metric name after the source_id prefix
+                            filter_metrics.add(m.split(":", 1)[1])
+                        else:
+                            filter_metrics.add(m)
+
                 while stream_id in self._active_streams:
                     all_readings = self.sensor_hub.read_all()
-                    if metrics:
-                        readings = [r for r in all_readings if r.metric in metrics]
+                    if filter_metrics:
+                        readings = [r for r in all_readings if r.metric in filter_metrics]
                     else:
                         readings = all_readings
                     points = [
@@ -302,10 +313,19 @@ class PlexusConnector:
 
         async def session_stream_loop():
             try:
+                # Strip source_id prefix from metrics for filtering
+                filter_metrics = set()
+                if metrics:
+                    for m in metrics:
+                        if ":" in m:
+                            filter_metrics.add(m.split(":", 1)[1])
+                        else:
+                            filter_metrics.add(m)
+
                 while session_id in self._active_streams and self._current_session:
                     all_readings = self.sensor_hub.read_all()
-                    if metrics:
-                        readings = [r for r in all_readings if r.metric in metrics]
+                    if filter_metrics:
+                        readings = [r for r in all_readings if r.metric in filter_metrics]
                     else:
                         readings = all_readings
                     points = [
