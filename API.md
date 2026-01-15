@@ -81,7 +81,7 @@ Plexus uses two types of credentials:
 Device tokens are created automatically during pairing:
 
 1. Go to [app.plexus.company/fleet](https://app.plexus.company/fleet)
-2. Click "Pair Device"
+2. Click "Pair Source"
 3. Run the setup command on your device (or `plexus pair --code ABC123`)
 4. Device token is saved to `~/.plexus/config.json`
 

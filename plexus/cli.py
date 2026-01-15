@@ -12,7 +12,8 @@ Usage:
 
 import sys
 import time
-from typing import Optional
+import threading
+from typing import Optional, Callable
 
 import click
 
@@ -28,6 +29,127 @@ from plexus.config import (
     get_config_path,
     is_logged_in,
 )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Console Styling
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Style:
+    """Consistent styling for CLI output."""
+
+    # Colors
+    SUCCESS = "green"
+    ERROR = "red"
+    WARNING = "yellow"
+    INFO = "cyan"
+    DIM = "bright_black"
+
+    # Symbols
+    CHECK = "✓"
+    CROSS = "✗"
+    BULLET = "•"
+    ARROW = "→"
+
+    # Layout
+    WIDTH = 45
+    INDENT = "  "
+
+    # Spinner frames
+    SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+
+def header(title: str):
+    """Print a styled header box."""
+    click.echo()
+    click.secho(f"  ┌{'─' * (Style.WIDTH - 2)}┐", fg=Style.DIM)
+    click.secho(f"  │  {title:<{Style.WIDTH - 6}}│", fg=Style.DIM)
+    click.secho(f"  └{'─' * (Style.WIDTH - 2)}┘", fg=Style.DIM)
+    click.echo()
+
+
+def divider():
+    """Print a subtle divider."""
+    click.secho(f"  {'─' * (Style.WIDTH - 2)}", fg=Style.DIM)
+
+
+def success(msg: str):
+    """Print a success message."""
+    click.secho(f"  {Style.CHECK} {msg}", fg=Style.SUCCESS)
+
+
+def error(msg: str):
+    """Print an error message."""
+    click.secho(f"  {Style.CROSS} {msg}", fg=Style.ERROR)
+
+
+def warning(msg: str):
+    """Print a warning message."""
+    click.secho(f"  {Style.BULLET} {msg}", fg=Style.WARNING)
+
+
+def info(msg: str):
+    """Print an info message."""
+    click.echo(f"  {msg}")
+
+
+def dim(msg: str):
+    """Print dimmed text."""
+    click.secho(f"  {msg}", fg=Style.DIM)
+
+
+def label(key: str, value: str, key_width: int = 12):
+    """Print a key-value pair."""
+    click.echo(f"  {key:<{key_width}} {value}")
+
+
+def hint(msg: str):
+    """Print a hint/help message."""
+    click.secho(f"  {msg}", fg=Style.INFO)
+
+
+class Spinner:
+    """Animated spinner for long-running operations."""
+
+    def __init__(self, message: str):
+        self.message = message
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+        self.frame = 0
+
+    def _spin(self):
+        while self.running:
+            frame = Style.SPINNER[self.frame % len(Style.SPINNER)]
+            click.echo(f"\r  {frame} {self.message}", nl=False)
+            self.frame += 1
+            time.sleep(0.08)
+
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(target=self._spin, daemon=True)
+        self.thread.start()
+
+    def stop(self, final_message: str = None, success_status: bool = True):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=0.2)
+        # Clear the line
+        click.echo(f"\r{' ' * (Style.WIDTH + 10)}\r", nl=False)
+        if final_message:
+            if success_status:
+                success(final_message)
+            else:
+                error(final_message)
+
+    def update(self, message: str):
+        self.message = message
+
+
+def status_line(msg: str):
+    """Print a timestamped status line."""
+    timestamp = time.strftime("%H:%M:%S")
+    click.secho(f"  {timestamp}", fg=Style.DIM, nl=False)
+    click.echo(f"  {msg}")
 
 
 @click.group()
@@ -74,10 +196,10 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
     api_key = get_api_key()
 
     if not device_token and not api_key:
+        header("Plexus Agent")
+        warning("Not paired yet")
         click.echo()
-        click.secho("Not paired yet!", fg="yellow")
-        click.echo()
-        click.echo("  Run 'plexus pair' to connect this device to your account.")
+        hint("Run 'plexus pair' to connect this device")
         click.echo()
         sys.exit(1)
 
@@ -90,14 +212,10 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
         config["source_name"] = name
         save_config(config)
 
-    # Clear, minimal startup banner
-    click.echo()
-    click.echo("┌─────────────────────────────────────────┐")
-    click.echo("│  Plexus Agent                           │")
-    click.echo("└─────────────────────────────────────────┘")
-    click.echo()
-    click.echo(f"  Source:    {name or source_id}")
-    click.echo(f"  Dashboard: {endpoint}")
+    header("Plexus Agent")
+
+    label("Source", name or source_id)
+    label("Endpoint", endpoint)
 
     # Auto-detect sensors
     sensor_hub = None
@@ -107,15 +225,15 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
             sensors = scan_sensors(bus)
             if sensors:
                 sensor_hub = auto_sensors(bus=bus)
-                click.echo(f"  Sensors:   {len(sensors)} detected")
+                label("Sensors", f"{len(sensors)} detected")
                 for s in sensors:
-                    click.echo(f"             • {s.name}")
+                    dim(f"             {Style.BULLET} {s.name}")
             else:
-                click.echo("  Sensors:   None detected")
+                label("Sensors", "None detected")
         except ImportError:
-            click.echo("  Sensors:   Not available (install smbus2)")
+            dim("Sensors      Not available")
         except Exception as e:
-            click.echo(f"  Sensors:   Error ({e})")
+            dim(f"Sensors      Error: {e}")
 
     # Auto-detect cameras
     camera_hub = None
@@ -125,38 +243,32 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
             cameras = scan_cameras()
             if cameras:
                 camera_hub = auto_cameras()
-                click.echo(f"  Cameras:   {len(cameras)} detected")
+                label("Cameras", f"{len(cameras)} detected")
                 for c in cameras:
-                    click.echo(f"             • {c.name}")
+                    dim(f"             {Style.BULLET} {c.name}")
             else:
-                click.echo("  Cameras:   None detected")
+                label("Cameras", "None detected")
         except ImportError:
-            click.echo("  Cameras:   Not available (install opencv-python)")
+            dim("Cameras      Not available")
         except Exception as e:
-            click.echo(f"  Cameras:   Error ({e})")
+            dim(f"Cameras      Error: {e}")
 
     click.echo()
-    click.echo("─" * 43)
+    divider()
     click.echo()
-
-    def status_callback(msg: str):
-        timestamp = time.strftime("%H:%M:%S")
-        click.echo(f"  [{timestamp}] {msg}")
-
-    status_callback("Connecting...")
 
     try:
         run_connector(
             api_key=api_key,
             device_token=device_token,
             endpoint=endpoint,
-            on_status=status_callback,
+            on_status=status_line,
             sensor_hub=sensor_hub,
             camera_hub=camera_hub,
         )
     except KeyboardInterrupt:
         click.echo()
-        status_callback("Disconnected")
+        status_line("Disconnected")
         click.echo()
 
 
@@ -189,16 +301,17 @@ def pair(code: Optional[str]):
 
     base_endpoint = "https://app.plexus.company"
 
-    click.echo()
-    click.echo("┌─────────────────────────────────────────┐")
-    click.echo("│  Plexus Device Pairing                  │")
-    click.echo("└─────────────────────────────────────────┘")
-    click.echo()
+    header("Device Pairing")
 
     if code:
-        # Pairing with code from dashboard
-        click.echo(f"  Pairing with code: {code}")
+        # ─────────────────────────────────────────────────────────────────────
+        # Code-based pairing (from dashboard)
+        # ─────────────────────────────────────────────────────────────────────
+        info(f"Code: {code.upper().strip()}")
         click.echo()
+
+        spinner = Spinner("Connecting to Plexus...")
+        spinner.start()
 
         try:
             import requests
@@ -215,64 +328,62 @@ def pair(code: Optional[str]):
                 source_id = data.get("source_id")
 
                 if device_token:
-                    # Save credentials
                     config = load_config()
                     config["device_token"] = device_token
 
-                    # Use source_id from server, or generate if not present
                     if source_id:
                         config["source_id"] = source_id
                     elif not config.get("source_id"):
                         import uuid
                         config["source_id"] = f"source-{uuid.uuid4().hex[:8]}"
 
-                    # Store org info if provided
                     if data.get("org_id"):
                         config["org_id"] = data["org_id"]
                     if data.get("source_name"):
                         config["source_name"] = data["source_name"]
-                    # Store endpoint for API calls
                     config["endpoint"] = data.get("endpoint", base_endpoint)
 
                     save_config(config)
 
-                    click.secho("  ✓ Paired successfully!", fg="green")
+                    spinner.stop("Paired successfully!", success_status=True)
                     click.echo()
-                    click.echo("  Your device is now connected.")
-                    click.echo("  Start the agent with:")
-                    click.echo()
-                    click.echo("    plexus run")
+                    hint("Start the agent with: plexus run")
                     click.echo()
                     return
                 else:
-                    click.secho("  ✗ Pairing failed: No device token returned", fg="red")
+                    spinner.stop("No device token returned", success_status=False)
                     sys.exit(1)
 
             elif response.status_code == 404:
-                click.secho("  ✗ Invalid or expired code", fg="red")
+                spinner.stop("Invalid or expired code", success_status=False)
                 click.echo()
-                click.echo("  Get a new code from the dashboard:")
-                click.echo("  https://app.plexus.company/fleet")
+                dim("Get a new code from the dashboard:")
+                hint("https://app.plexus.company/fleet")
+                click.echo()
                 sys.exit(1)
 
             elif response.status_code == 410:
-                click.secho("  ✗ Code has already been used", fg="red")
+                spinner.stop("Code has already been used", success_status=False)
                 click.echo()
-                click.echo("  Get a new code from the dashboard:")
-                click.echo("  https://app.plexus.company/fleet")
+                dim("Get a new code from the dashboard:")
+                hint("https://app.plexus.company/fleet")
+                click.echo()
                 sys.exit(1)
 
             else:
-                click.secho(f"  ✗ Pairing failed: {response.text}", fg="red")
+                spinner.stop(f"Pairing failed: {response.text}", success_status=False)
                 sys.exit(1)
 
         except Exception as e:
-            click.secho(f"  ✗ Error: {e}", fg="red")
+            spinner.stop(f"Error: {e}", success_status=False)
             sys.exit(1)
 
     else:
-        # OAuth device flow (existing login logic)
-        click.echo("  Requesting authorization...")
+        # ─────────────────────────────────────────────────────────────────────
+        # OAuth device flow
+        # ─────────────────────────────────────────────────────────────────────
+        spinner = Spinner("Requesting authorization...")
+        spinner.start()
 
         try:
             import requests
@@ -283,7 +394,7 @@ def pair(code: Optional[str]):
             )
 
             if response.status_code != 200:
-                click.secho(f"  ✗ Failed to start pairing: {response.text}", fg="red")
+                spinner.stop(f"Failed to start pairing: {response.text}", success_status=False)
                 sys.exit(1)
 
             data = response.json()
@@ -293,31 +404,39 @@ def pair(code: Optional[str]):
             interval = data.get("interval", 5)
             expires_in = data.get("expires_in", 900)
 
+            spinner.stop()
+
         except Exception as e:
-            click.secho(f"  ✗ Error: {e}", fg="red")
+            spinner.stop(f"Error: {e}", success_status=False)
             sys.exit(1)
 
+        # Display the code prominently
         click.echo()
-        click.echo(f"  Your code: {user_code}")
+        click.secho(f"  Your code:  ", fg=Style.DIM, nl=False)
+        click.secho(user_code, fg=Style.INFO, bold=True)
         click.echo()
-        click.echo("  Opening browser...")
-        webbrowser.open(verification_url)
-        click.echo()
-        click.echo("  If browser doesn't open, visit:")
-        click.echo(f"  {verification_url}")
-        click.echo()
-        click.secho("  No account? Sign up from the browser.", fg="cyan")
-        click.echo()
-        click.echo("─" * 43)
-        click.echo()
-        click.echo("  Waiting for authorization...")
 
-        # Poll for token
+        webbrowser.open(verification_url)
+
+        dim("Browser opened. If not, visit:")
+        hint(verification_url)
+        click.echo()
+        dim("No account? Sign up from the browser.")
+        click.echo()
+        divider()
+        click.echo()
+
+        # Poll for token with spinner
+        spinner = Spinner("Waiting for authorization...")
+        spinner.start()
+
         start_time = time.time()
         max_wait = expires_in
 
         while time.time() - start_time < max_wait:
             time.sleep(interval)
+            elapsed = int(time.time() - start_time)
+            spinner.update(f"Waiting for authorization... ({elapsed}s)")
 
             try:
                 import requests
@@ -328,57 +447,48 @@ def pair(code: Optional[str]):
                 )
 
                 if poll_response.status_code == 200:
-                    # Success!
                     token_data = poll_response.json()
                     api_key = token_data.get("api_key")
 
                     if api_key:
-                        # Save to config
                         config = load_config()
                         config["api_key"] = api_key
 
-                        # Generate source ID if not present
                         if not config.get("source_id"):
                             import uuid
                             config["source_id"] = f"source-{uuid.uuid4().hex[:8]}"
 
                         save_config(config)
 
+                        spinner.stop("Paired successfully!", success_status=True)
                         click.echo()
-                        click.secho("  ✓ Paired successfully!", fg="green")
-                        click.echo()
-                        click.echo("  Your device is now connected.")
-                        click.echo("  Start the agent with:")
-                        click.echo()
-                        click.echo("    plexus run")
+                        hint("Start the agent with: plexus run")
                         click.echo()
                         return
 
                 elif poll_response.status_code == 202:
-                    # Still waiting
-                    elapsed = int(time.time() - start_time)
-                    click.echo(f"\r  Waiting... ({elapsed}s)  ", nl=False)
                     continue
 
                 elif poll_response.status_code == 403:
-                    click.echo()
-                    click.secho("  ✗ Authorization was denied", fg="red")
+                    spinner.stop("Authorization was denied", success_status=False)
                     sys.exit(1)
 
                 elif poll_response.status_code == 400:
-                    error = poll_response.json().get("error", "")
-                    if error == "expired_token":
+                    err = poll_response.json().get("error", "")
+                    if err == "expired_token":
+                        spinner.stop("Authorization expired", success_status=False)
                         click.echo()
-                        click.secho("  ✗ Authorization expired. Please try again.", fg="red")
+                        hint("Try again: plexus pair")
+                        click.echo()
                         sys.exit(1)
 
             except Exception:
-                # Network error, keep trying
                 continue
 
+        spinner.stop("Timed out waiting for authorization", success_status=False)
         click.echo()
-        click.secho("  ✗ Timed out waiting for authorization", fg="red")
-        click.echo("  Please try again: plexus pair")
+        hint("Try again: plexus pair")
+        click.echo()
         sys.exit(1)
 
 
@@ -395,61 +505,59 @@ def status():
     config = load_config()
     source_name = config.get("source_name")
 
-    click.echo()
-    click.echo("┌─────────────────────────────────────────┐")
-    click.echo("│  Plexus Agent Status                    │")
-    click.echo("└─────────────────────────────────────────┘")
-    click.echo()
-    click.echo(f"  Config:    {get_config_path()}")
-    click.echo(f"  Source ID: {source_id}")
+    header("Agent Status")
+
+    label("Config", str(get_config_path()))
+    label("Source ID", source_id or "Not set")
     if source_name:
-        click.echo(f"  Name:      {source_name}")
-    click.echo(f"  Endpoint:  {get_endpoint()}")
+        label("Name", source_name)
+    label("Endpoint", get_endpoint())
 
     if device_token:
-        # Show only prefix of device token
         masked = device_token[:12] + "..." if len(device_token) > 12 else "****"
-        click.echo(f"  Auth:      {masked} (device token)")
+        label("Auth", f"{masked} (device token)")
         click.echo()
-        click.echo("─" * 43)
+        divider()
         click.echo()
-        click.secho("  Status:    ✓ Paired", fg="green")
+        success("Paired")
         click.echo()
-        click.echo("  Ready to run: plexus run")
-        click.echo()
-    elif api_key:
-        # Show only prefix of API key (legacy)
-        masked = api_key[:12] + "..." if len(api_key) > 12 else "****"
-        click.echo(f"  Auth:      {masked} (API key - legacy)")
-        click.echo()
-        click.echo("─" * 43)
+        hint("Ready to run: plexus run")
         click.echo()
 
-        # Test connection
-        click.echo("  Testing connection...")
+    elif api_key:
+        masked = api_key[:12] + "..." if len(api_key) > 12 else "****"
+        label("Auth", f"{masked} (API key)")
+        click.echo()
+        divider()
+        click.echo()
+
+        spinner = Spinner("Testing connection...")
+        spinner.start()
+
         try:
             px = Plexus()
             px.send("plexus.agent.status", 1, tags={"event": "status_check"})
-            click.secho("  Status:    ✓ Connected", fg="green")
+            spinner.stop("Connected", success_status=True)
             click.echo()
-            click.echo("  Ready to run: plexus run")
+            hint("Ready to run: plexus run")
             click.echo()
         except AuthenticationError:
-            click.secho("  Status:    ✗ Auth failed", fg="red")
+            spinner.stop("Auth failed", success_status=False)
             click.echo()
-            click.echo("  Re-pair with: plexus pair")
+            hint("Re-pair with: plexus pair")
             click.echo()
         except PlexusError:
-            click.secho("  Status:    ✗ Connection failed", fg="yellow")
+            spinner.stop("Connection failed", success_status=False)
             click.echo()
+
     else:
-        click.echo("  Auth:      Not configured")
+        label("Auth", "Not configured")
         click.echo()
-        click.echo("─" * 43)
+        divider()
         click.echo()
-        click.secho("  Not paired yet!", fg="yellow")
+        warning("Not paired yet")
         click.echo()
-        click.echo("  Run 'plexus pair' to connect this device.")
+        hint("Run 'plexus pair' to connect this device")
         click.echo()
 
 
@@ -468,63 +576,59 @@ def scan(bus: int, show_all: bool):
         plexus scan -b 0               # Scan different I2C bus
         plexus scan --all              # Show all I2C addresses
     """
-    click.echo()
-    click.echo("Scanning for devices...")
-    click.echo("─" * 43)
+    header("Device Scan")
 
     # Scan for cameras
-    click.echo()
-    click.echo("  Cameras:")
+    info("Cameras")
     try:
         from plexus.cameras import scan_cameras
         detected_cameras = scan_cameras()
         if detected_cameras:
             for c in detected_cameras:
-                click.secho(f"    • {c.name}", fg="green")
-                click.echo(f"      {c.description}")
+                click.secho(f"    {Style.CHECK} {c.name}", fg=Style.SUCCESS)
+                dim(f"      {c.description}")
         else:
-            click.echo("    None detected")
+            dim("    None detected")
     except ImportError:
-        click.echo("    Not available (install opencv-python)")
+        dim("    Not available (install opencv-python)")
     except Exception as e:
-        click.echo(f"    Error: {e}")
+        dim(f"    Error: {e}")
+
+    click.echo()
 
     # Scan for sensors
-    click.echo()
-    click.echo("  Sensors:")
+    info("Sensors")
     try:
         from plexus.sensors import scan_sensors, scan_i2c, get_sensor_info
     except ImportError:
-        click.echo("    Not available (install smbus2)")
+        dim("    Not available (install smbus2)")
         click.echo()
         return
 
     if show_all:
-        # Show all I2C addresses
         try:
             addresses = scan_i2c(bus)
             if addresses:
-                click.echo(f"    I2C devices on bus {bus}:")
+                dim(f"    I2C devices on bus {bus}:")
                 for addr in addresses:
-                    click.echo(f"      0x{addr:02X}")
+                    info(f"      0x{addr:02X}")
             else:
-                click.echo(f"    No I2C devices on bus {bus}")
+                dim(f"    No I2C devices on bus {bus}")
         except Exception as e:
-            click.echo(f"    Error: {e}")
+            dim(f"    Error: {e}")
         click.echo()
         return
 
-    # Scan for known sensors
     try:
         sensors = scan_sensors(bus)
         if sensors:
             for s in sensors:
-                click.secho(f"    • {s.name}", fg="green")
-                click.echo(f"      {s.description}")
+                click.secho(f"    {Style.CHECK} {s.name}", fg=Style.SUCCESS)
+                dim(f"      {s.description}")
         else:
-            click.echo("    None detected")
+            dim("    None detected")
     except Exception as e:
-        click.echo(f"    Error: {e}")
+        dim(f"    Error: {e}")
 
     click.echo()
 
@@ -536,7 +640,8 @@ def scan(bus: int, show_all: bool):
 @click.pass_context
 def connect(ctx, no_sensors: bool, bus: int):
     """Alias for 'run' (deprecated, use 'plexus run' instead)."""
-    click.secho("Note: 'plexus connect' is deprecated. Use 'plexus run' instead.", fg="yellow")
+    warning("'plexus connect' is deprecated. Use 'plexus run' instead.")
+    click.echo()
     ctx.invoke(run, no_sensors=no_sensors, bus=bus)
 
 
@@ -545,7 +650,8 @@ def connect(ctx, no_sensors: bool, bus: int):
 @click.pass_context
 def login(ctx):
     """Alias for 'pair' (deprecated, use 'plexus pair' instead)."""
-    click.secho("Note: 'plexus login' is deprecated. Use 'plexus pair' instead.", fg="yellow")
+    warning("'plexus login' is deprecated. Use 'plexus pair' instead.")
+    click.echo()
     ctx.invoke(pair)
 
 
