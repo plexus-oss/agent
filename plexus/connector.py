@@ -367,6 +367,15 @@ class PlexusConnector:
             camera.quality = data["quality"]
         camera.frame_rate = frame_rate
 
+        # Stop existing stream for this camera before starting a new one
+        if camera_id in self._active_camera_streams:
+            self._active_camera_streams[camera_id].cancel()
+            try:
+                await self._active_camera_streams[camera_id]
+            except (asyncio.CancelledError, Exception):
+                pass
+            del self._active_camera_streams[camera_id]
+
         self.on_status(f"Camera {camera_id} @ {frame_rate}fps")
 
         async def camera_loop():

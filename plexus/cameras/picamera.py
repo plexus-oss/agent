@@ -76,6 +76,8 @@ class PiCamera(BaseCamera):
 
     def setup(self) -> None:
         """Initialize the camera."""
+        if self._picam is not None:
+            self.cleanup()
         self._picam = Picamera2(camera_num=self.camera_num)
 
         # Configure for still capture with specified resolution

@@ -4,8 +4,9 @@ Camera auto-detection utilities.
 Scans for available cameras and creates appropriate drivers.
 """
 
+import os
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Type
+from typing import List, Optional, Set, Tuple, Type
 
 from plexus.cameras.base import BaseCamera, CameraHub
 
@@ -19,12 +20,39 @@ class DetectedCamera:
     description: str
 
 
-def scan_usb_cameras(max_cameras: int = 10) -> List[DetectedCamera]:
+def _get_pi_camera_v4l2_indices() -> Set[int]:
+    """Get V4L2 device indices that belong to the Pi Camera pipeline.
+
+    On Raspberry Pi, the camera module exposes multiple /dev/video* devices
+    through the Unicam/ISP pipeline. These should not be opened by OpenCV
+    as they conflict with picamera2/libcamera access.
+    """
+    pi_indices: Set[int] = set()
+    sysfs = "/sys/class/video4linux"
+    if not os.path.isdir(sysfs):
+        return pi_indices
+    for entry in os.listdir(sysfs):
+        if not entry.startswith("video"):
+            continue
+        try:
+            with open(os.path.join(sysfs, entry, "name")) as f:
+                name = f.read().strip().lower()
+            if "unicam" in name or "bcm2835" in name or "rp1" in name:
+                pi_indices.add(int(entry[5:]))  # strip "video" prefix
+        except (IOError, OSError, ValueError):
+            pass
+    return pi_indices
+
+
+def scan_usb_cameras(
+    max_cameras: int = 10, skip_indices: Optional[Set[int]] = None
+) -> List[DetectedCamera]:
     """
     Scan for USB cameras using OpenCV.
 
     Args:
         max_cameras: Maximum number of device indices to check.
+        skip_indices: V4L2 device indices to skip (e.g. Pi Camera devices).
 
     Returns:
         List of detected USB cameras.
@@ -39,6 +67,8 @@ def scan_usb_cameras(max_cameras: int = 10) -> List[DetectedCamera]:
     detected = []
 
     for i in range(max_cameras):
+        if skip_indices and i in skip_indices:
+            continue
         cap = cv2.VideoCapture(i)
         if cap.isOpened():
             # Get camera info if available
@@ -99,12 +129,22 @@ def scan_cameras() -> List[DetectedCamera]:
     """
     Scan for all available cameras (USB and Pi).
 
+    Pi cameras are scanned first so their V4L2 devices can be excluded
+    from the USB scan, preventing duplicate detection and device conflicts.
+
     Returns:
         List of all detected cameras.
     """
     cameras = []
-    cameras.extend(scan_usb_cameras())
-    cameras.extend(scan_pi_cameras())
+
+    pi_cameras = scan_pi_cameras()
+    cameras.extend(pi_cameras)
+
+    # If Pi cameras exist, skip their V4L2 device indices so OpenCV
+    # doesn't open them (which blocks picamera2/libcamera access).
+    skip = _get_pi_camera_v4l2_indices() if pi_cameras else set()
+    cameras.extend(scan_usb_cameras(skip_indices=skip))
+
     return cameras
 
 
