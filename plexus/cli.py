@@ -191,6 +191,9 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
         plexus run --no-cameras        # Without camera detection
     """
     from plexus.connector import run_connector
+    import socket
+    import platform
+    import requests
 
     device_token = get_device_token()
     api_key = get_api_key()
@@ -199,11 +202,70 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
         header("Plexus Agent")
         warning("Not paired yet")
         click.echo()
-        hint("Run 'plexus pair' to connect this device")
+        hint("Set PLEXUS_API_KEY environment variable or run 'plexus pair'")
         click.echo()
         sys.exit(1)
 
     endpoint = get_endpoint()
+
+    # Auto-register if we have an API key but no device token
+    if api_key and not device_token:
+        header("Plexus Agent")
+        info("Auto-registering device...")
+
+        try:
+            # Get device info for registration
+            hostname = socket.gethostname()
+            platform_info = f"{platform.system()} {platform.machine()}"
+
+            # Call registration endpoint
+            response = requests.post(
+                f"{endpoint}/api/sources/register",
+                headers={
+                    "x-api-key": api_key,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "name": name,
+                    "hostname": hostname,
+                    "platform": platform_info,
+                },
+                timeout=30,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                device_token = data["device_token"]
+                source_id = data["source_id"]
+                org_id = data.get("org_id")
+
+                # Save credentials
+                config = load_config()
+                config["device_token"] = device_token
+                config["source_id"] = source_id
+                if org_id:
+                    config["org_id"] = org_id
+                save_config(config)
+
+                if data.get("existing"):
+                    success(f"Reconnected as {source_id}")
+                else:
+                    success(f"Registered as {source_id}")
+                click.echo()
+            else:
+                error_msg = response.json().get("error", "Registration failed")
+                error(f"Registration failed: {error_msg}")
+                sys.exit(1)
+
+        except requests.exceptions.RequestException as e:
+            error(f"Could not connect to {endpoint}: {e}")
+            sys.exit(1)
+        except Exception as e:
+            error(f"Registration error: {e}")
+            sys.exit(1)
+    else:
+        header("Plexus Agent")
+
     source_id = get_source_id()
 
     # Update source name if provided

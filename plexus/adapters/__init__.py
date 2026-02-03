@@ -6,15 +6,21 @@ Plexus to ingest data from any protocol without modifying core code.
 
 Built-in adapters:
     - MQTTAdapter: Bridge MQTT brokers to Plexus
-    - (Coming soon) ModbusAdapter, CANAdapter, SerialAdapter, OPCUAAdapter
+    - CANAdapter: CAN bus with DBC signal decoding
 
 Usage:
-    from plexus.adapters import MQTTAdapter, AdapterRegistry
+    from plexus.adapters import MQTTAdapter, CANAdapter, AdapterRegistry
 
     # Use built-in adapter
     adapter = MQTTAdapter(broker="localhost", topic="sensors/#")
     adapter.connect()
     adapter.run(on_data=my_callback)
+
+    # CAN bus adapter
+    adapter = CANAdapter(interface="socketcan", channel="can0", dbc_path="vehicle.dbc")
+    with adapter:
+        for metric in adapter.poll():
+            print(f"{metric.name}: {metric.value}")
 
     # Create custom adapter
     from plexus.adapters import ProtocolAdapter, Metric
@@ -42,6 +48,14 @@ from plexus.adapters.base import (
 from plexus.adapters.registry import AdapterRegistry
 from plexus.adapters.mqtt import MQTTAdapter
 
+# Import CANAdapter (requires optional [can] extra)
+try:
+    from plexus.adapters.can import CANAdapter
+    _HAS_CAN = True
+except ImportError:
+    CANAdapter = None  # type: ignore
+    _HAS_CAN = False
+
 __all__ = [
     "ProtocolAdapter",
     "Metric",
@@ -50,4 +64,5 @@ __all__ = [
     "AdapterError",
     "AdapterRegistry",
     "MQTTAdapter",
+    "CANAdapter",
 ]

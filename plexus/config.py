@@ -6,8 +6,44 @@ Config is stored in ~/.plexus/config.json
 
 import json
 import os
+import random
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+
+@dataclass
+class RetryConfig:
+    """Configuration for retry behavior with exponential backoff.
+
+    Args:
+        max_retries: Maximum number of retry attempts. Default 3.
+        base_delay: Initial delay in seconds before first retry. Default 1.0.
+        max_delay: Maximum delay between retries in seconds. Default 30.0.
+        exponential_base: Base for exponential backoff calculation. Default 2.
+        jitter: Whether to add random jitter to delays. Default True.
+    """
+
+    max_retries: int = 3
+    base_delay: float = 1.0
+    max_delay: float = 30.0
+    exponential_base: float = 2.0
+    jitter: bool = True
+
+    def get_delay(self, attempt: int) -> float:
+        """Calculate delay for a given retry attempt (0-indexed).
+
+        Uses exponential backoff: delay = base_delay * (exponential_base ** attempt)
+        With optional jitter to prevent thundering herd.
+        """
+        delay = self.base_delay * (self.exponential_base ** attempt)
+        delay = min(delay, self.max_delay)
+
+        if self.jitter:
+            # Add jitter: random value between 0 and delay
+            delay = delay * (0.5 + random.random() * 0.5)
+
+        return delay
 
 CONFIG_DIR = Path.home() / ".plexus"
 CONFIG_FILE = CONFIG_DIR / "config.json"

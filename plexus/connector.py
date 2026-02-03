@@ -1,10 +1,25 @@
 """
-WebSocket connector for remote terminal access and sensor streaming.
+Plexus Device Connector
 
-Connects to the Plexus PartyKit server and allows:
-- Remote command execution
-- Bidirectional sensor streaming (start/stop from dashboard)
-- Real-time sensor configuration
+Connects devices to Plexus via WebSocket for real-time streaming and control.
+
+Data Flow:
+┌─────────────────────────────────────────────────────────────────┐
+│  Device (this agent)                                            │
+│       │                                                         │
+│       ├──► WebSocket (PartyKit) ──► Dashboard (real-time view)  │
+│       │                                                         │
+│       └──► HTTP (/api/ingest) ──► ClickHouse (storage)          │
+│            (only when store=True)                               │
+└─────────────────────────────────────────────────────────────────┘
+
+User Controls (from Dashboard UI):
+- "View Live" → store=False → WebSocket only (free, no storage)
+- "Record"    → store=True  → WebSocket + HTTP (uses storage quota)
+
+Authentication:
+- Device token (plxd_*) from pairing works for both WebSocket and HTTP
+- API key (plx_*) also works if user prefers
 """
 
 import asyncio
@@ -15,7 +30,7 @@ import platform
 import shlex
 import subprocess
 import time
-from typing import Optional, Callable, TYPE_CHECKING
+from typing import Optional, Callable, List, Dict, Any, TYPE_CHECKING
 
 import websockets
 from websockets.exceptions import ConnectionClosed
@@ -29,8 +44,13 @@ if TYPE_CHECKING:
 
 class PlexusConnector:
     """
-    WebSocket client that connects to Plexus PartyKit server.
-    Supports bidirectional streaming for sensor data.
+    WebSocket client that connects to Plexus for real-time data streaming.
+
+    Supports:
+    - Real-time sensor streaming (controlled from dashboard)
+    - Camera streaming
+    - Remote command execution
+    - Optional data persistence (when recording)
     """
 
     def __init__(
@@ -44,7 +64,7 @@ class PlexusConnector:
         sensor_hub: Optional["SensorHub"] = None,
         camera_hub: Optional["CameraHub"] = None,
     ):
-        # Device token is preferred over API key (new pairing flow)
+        # Device token is preferred (from pairing flow)
         self.device_token = device_token or get_device_token()
         self.api_key = api_key or get_api_key()
         self.endpoint = (endpoint or get_endpoint()).rstrip("/")
@@ -60,20 +80,26 @@ class PlexusConnector:
         self._current_process: Optional[subprocess.Popen] = None
         self._active_streams: dict[str, asyncio.Task] = {}
         self._active_camera_streams: dict[str, asyncio.Task] = {}
-        self._current_session: Optional[dict] = None  # {session_id, session_name}
+
+        # Recording state - when True, data is persisted to ClickHouse
+        self._recording: bool = False
+        self._http_session: Optional[Any] = None
+
+    # =========================================================================
+    # Connection URLs
+    # =========================================================================
 
     def _get_ws_url(self) -> str:
         """Get PartyKit WebSocket URL."""
-        # 1. Explicit env var takes priority
+        # 1. Explicit env var
         ws_endpoint = os.environ.get("PLEXUS_WS_URL")
         if ws_endpoint:
             base = ws_endpoint.rstrip("/")
-            # PartyKit URL format: ws://host/party/{room_id}
             if "/party/" in base:
-                return base  # Already has room
+                return base
             return f"{base}/party/{self.org_id}"
 
-        # 2. Try to discover from main API
+        # 2. Discover from API
         try:
             import httpx
             resp = httpx.get(f"{self.endpoint}/api/config", timeout=5.0)
@@ -81,18 +107,72 @@ class PlexusConnector:
                 config = resp.json()
                 ws_url = config.get("ws_url")
                 if ws_url:
-                    base = ws_url.rstrip("/")
-                    return f"{base}/party/{self.org_id}"
+                    return f"{ws_url.rstrip('/')}/party/{self.org_id}"
         except Exception:
             pass
 
-        # 3. Fallback: local PartyKit dev server
+        # 3. Fallback: local dev server
         return f"ws://127.0.0.1:1999/party/{self.org_id}"
 
+    # =========================================================================
+    # HTTP Persistence (for recording)
+    # =========================================================================
+
+    def _get_http_session(self):
+        """Get HTTP session for data persistence."""
+        if self._http_session is None:
+            import requests
+            self._http_session = requests.Session()
+            # Device token or API key - both work for /api/ingest
+            auth_token = self.api_key or self.device_token
+            if auth_token:
+                self._http_session.headers["x-api-key"] = auth_token
+            self._http_session.headers["Content-Type"] = "application/json"
+            self._http_session.headers["User-Agent"] = "plexus-agent/0.1.0"
+        return self._http_session
+
+    def _persist_points(self, points: List[Dict[str, Any]]) -> bool:
+        """
+        Persist data points to ClickHouse via HTTP.
+        Called when recording is enabled. Runs in thread pool.
+        """
+        if not self.api_key and not self.device_token:
+            return False
+
+        try:
+            formatted = [
+                {
+                    "metric": p["metric"],
+                    "value": p["value"],
+                    "source_id": self.source_id,
+                    "timestamp": p.get("timestamp", int(time.time() * 1000)) / 1000,
+                    "tags": p.get("tags", {}),
+                }
+                for p in points
+            ]
+
+            response = self._get_http_session().post(
+                f"{self.endpoint}/api/ingest",
+                json={"points": formatted},
+                timeout=5.0,
+            )
+            return response.status_code < 400
+        except Exception:
+            return False
+
+    async def _persist_async(self, points: List[Dict[str, Any]]):
+        """Async wrapper - runs HTTP in thread pool."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._persist_points, points)
+
+    # =========================================================================
+    # WebSocket Connection
+    # =========================================================================
+
     async def connect(self):
-        """Connect to the Plexus PartyKit server and listen for commands."""
+        """Connect to Plexus and listen for commands."""
         if not self.device_token and not self.api_key:
-            raise ValueError("No credentials configured. Run 'plexus pair' first.")
+            raise ValueError("No credentials. Run 'plexus pair' first.")
 
         ws_url = self._get_ws_url()
         self.on_status(f"Connecting to {ws_url}...")
@@ -101,55 +181,38 @@ class PlexusConnector:
 
         while self._running:
             try:
-                async with websockets.connect(
-                    ws_url,
-                    ping_interval=30,
-                    ping_timeout=10,
-                ) as ws:
+                async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
                     self._ws = ws
                     self._authenticated = False
 
-                    # Gather sensor info if available
-                    sensors_info = []
-                    if self.sensor_hub:
-                        sensors_info = self.sensor_hub.get_info()
-
-                    # Gather camera info if available
-                    cameras_info = []
-                    if self.camera_hub:
-                        cameras_info = self.camera_hub.get_info()
-
-                    # Build auth message - prefer device_token over api_key
+                    # Build auth message
                     auth_msg = {
                         "type": "device_auth",
                         "source_id": self.source_id,
                         "platform": platform.system(),
-                        "sensors": sensors_info,
-                        "cameras": cameras_info,
+                        "sensors": self.sensor_hub.get_info() if self.sensor_hub else [],
+                        "cameras": self.camera_hub.get_info() if self.camera_hub else [],
                     }
                     if self.device_token:
                         auth_msg["device_token"] = self.device_token
                     elif self.api_key:
                         auth_msg["api_key"] = self.api_key
 
-                    # Authenticate with PartyKit
                     await ws.send(json.dumps(auth_msg))
-
                     self.on_status("Authenticating...")
 
-                    # Listen for messages
                     async for message in ws:
                         await self._handle_message(message)
 
             except ConnectionClosed as e:
-                self.on_status(f"Connection closed: {e.reason}")
+                self.on_status(f"Disconnected: {e.reason}")
                 if self._running:
-                    self.on_status("Reconnecting in 5 seconds...")
+                    self.on_status("Reconnecting in 5s...")
                     await asyncio.sleep(5)
             except Exception as e:
-                self.on_status(f"Connection error: {e}")
+                self.on_status(f"Error: {e}")
                 if self._running:
-                    self.on_status("Reconnecting in 5 seconds...")
+                    self.on_status("Reconnecting in 5s...")
                     await asyncio.sleep(5)
 
     async def _handle_message(self, message: str):
@@ -158,411 +221,279 @@ class PlexusConnector:
             data = json.loads(message)
             msg_type = data.get("type")
 
-            # Handle authentication response
             if msg_type == "authenticated":
                 self._authenticated = True
-                self.on_status(f"Connected! Source ID: {data.get('source_id')}")
+                self.on_status(f"Connected as {data.get('source_id')}")
                 return
 
             if msg_type == "error":
                 self.on_status(f"Error: {data.get('message')}")
                 return
 
-            # Only process commands if authenticated
             if not self._authenticated:
                 return
 
-            if msg_type == "execute":
-                await self._execute_command(data)
-            elif msg_type == "cancel":
-                self._cancel_current()
-            elif msg_type == "ping":
-                await self._ws.send(json.dumps({"type": "pong"}))
-            elif msg_type == "start_stream":
-                await self._start_stream(data)
-            elif msg_type == "stop_stream":
-                await self._stop_stream(data)
-            elif msg_type == "configure":
-                await self._configure_sensor(data)
-            elif msg_type == "start_session":
-                await self._start_session(data)
-            elif msg_type == "stop_session":
-                await self._stop_session(data)
-            elif msg_type == "start_camera":
-                await self._start_camera_stream(data)
-            elif msg_type == "stop_camera":
-                await self._stop_camera_stream(data)
-            elif msg_type == "configure_camera":
-                await self._configure_camera(data)
+            # Command handlers
+            handlers = {
+                "start_stream": self._start_stream,
+                "stop_stream": self._stop_stream,
+                "start_camera": self._start_camera,
+                "stop_camera": self._stop_camera,
+                "execute": self._execute_command,
+                "cancel": lambda _: self._cancel_command(),
+                "configure": self._configure_sensor,
+                "configure_camera": self._configure_camera,
+                "ping": lambda _: self._ws.send(json.dumps({"type": "pong"})),
+            }
+
+            handler = handlers.get(msg_type)
+            if handler:
+                result = handler(data)
+                if asyncio.iscoroutine(result):
+                    await result
 
         except json.JSONDecodeError:
             self.on_status(f"Invalid message: {message}")
 
+    # =========================================================================
+    # Sensor Streaming
+    # =========================================================================
+
     async def _start_stream(self, data: dict):
-        """Start streaming sensor data to the server."""
-        stream_id = data.get("id")
+        """
+        Start streaming sensor data.
+
+        Args (from dashboard):
+            store: bool - If True, persist to ClickHouse. If False, real-time only.
+            metrics: list - Which metrics to stream (empty = all)
+            interval_ms: int - Sampling interval
+        """
+        stream_id = data.get("id", f"stream_{int(time.time())}")
         metrics = data.get("metrics", [])
         interval_ms = data.get("interval_ms", 100)
+        store = data.get("store", False)
+
+        self._recording = store
 
         if not self.sensor_hub:
-            self.on_status("No sensor hub configured - cannot stream")
-            await self._ws.send(json.dumps({
-                "type": "output",
-                "id": stream_id,
-                "event": "error",
-                "error": "No sensors configured on this device",
-            }))
+            self.on_status("No sensors configured")
             return
 
-        self.on_status(f"Starting stream {stream_id}: {metrics} @ {interval_ms}ms")
+        mode = "Recording" if store else "Viewing"
+        self.on_status(f"{mode}: {metrics or 'all'} @ {interval_ms}ms")
 
         async def stream_loop():
-            try:
-                # Strip source_id prefix from metrics for filtering
-                # Frontend sends "source_id:metric" but sensors report just "metric"
-                filter_metrics = set()
-                if metrics:
-                    for m in metrics:
-                        if ":" in m:
-                            # Extract metric name after the source_id prefix
-                            filter_metrics.add(m.split(":", 1)[1])
-                        else:
-                            filter_metrics.add(m)
+            # Parse metric filters (strip source_id prefix if present)
+            filters = set()
+            for m in metrics:
+                filters.add(m.split(":", 1)[-1] if ":" in m else m)
 
+            try:
                 while stream_id in self._active_streams:
-                    all_readings = self.sensor_hub.read_all()
-                    if filter_metrics:
-                        readings = [r for r in all_readings if r.metric in filter_metrics]
-                    else:
-                        readings = all_readings
+                    readings = self.sensor_hub.read_all()
+                    if filters:
+                        readings = [r for r in readings if r.metric in filters]
+
                     points = [
-                        {
-                            "metric": r.metric,
-                            "value": r.value,
-                            "timestamp": int(time.time() * 1000),
-                        }
+                        {"metric": r.metric, "value": r.value, "timestamp": int(time.time() * 1000)}
                         for r in readings
                     ]
-                    await self._ws.send(json.dumps({
-                        "type": "telemetry",
-                        "points": points,
-                    }))
+
+                    # Always send to WebSocket (real-time display)
+                    await self._ws.send(json.dumps({"type": "telemetry", "points": points}))
+
+                    # If recording, also persist via HTTP
+                    if self._recording and points:
+                        asyncio.create_task(self._persist_async(points))
+
                     await asyncio.sleep(interval_ms / 1000)
             except asyncio.CancelledError:
                 pass
             except Exception as e:
                 self.on_status(f"Stream error: {e}")
 
-        task = asyncio.create_task(stream_loop())
-        self._active_streams[stream_id] = task
+        self._active_streams[stream_id] = asyncio.create_task(stream_loop())
 
     async def _stop_stream(self, data: dict):
-        """Stop a running sensor stream."""
+        """Stop sensor streaming."""
         stream_id = data.get("id")
 
-        if stream_id in self._active_streams:
-            self._active_streams[stream_id].cancel()
-            del self._active_streams[stream_id]
-            self.on_status(f"Stopped stream {stream_id}")
-        elif stream_id == "*":
+        if stream_id == "*":
             for task in self._active_streams.values():
                 task.cancel()
             self._active_streams.clear()
             self.on_status("Stopped all streams")
+        elif stream_id in self._active_streams:
+            self._active_streams[stream_id].cancel()
+            del self._active_streams[stream_id]
+            self.on_status(f"Stopped stream")
+
+        self._recording = False
 
     async def _configure_sensor(self, data: dict):
-        """Configure a sensor on this device."""
-        sensor_name = data.get("sensor")
-        config = data.get("config", {})
-
+        """Configure a sensor."""
         if not self.sensor_hub:
             return
 
-        sensor = self.sensor_hub.get_sensor(sensor_name)
+        sensor = self.sensor_hub.get_sensor(data.get("sensor"))
         if sensor and hasattr(sensor, "configure"):
             try:
-                sensor.configure(**config)
-                self.on_status(f"Configured {sensor_name}: {config}")
+                sensor.configure(**data.get("config", {}))
+                self.on_status(f"Configured {data.get('sensor')}")
             except Exception as e:
-                self.on_status(f"Failed to configure {sensor_name}: {e}")
+                self.on_status(f"Config failed: {e}")
 
-    async def _start_session(self, data: dict):
-        """Start a recording session - streams data with session_id tag."""
-        session_id = data.get("session_id")
-        session_name = data.get("session_name", "Untitled")
-        metrics = data.get("metrics", [])
-        interval_ms = data.get("interval_ms", 100)
+    # =========================================================================
+    # Camera Streaming
+    # =========================================================================
 
-        if not self.sensor_hub:
-            self.on_status("No sensor hub configured - cannot record session")
-            await self._ws.send(json.dumps({
-                "type": "output",
-                "id": session_id,
-                "event": "error",
-                "error": "No sensors configured on this device",
-            }))
-            return
-
-        # Store current session info
-        self._current_session = {
-            "session_id": session_id,
-            "session_name": session_name,
-        }
-
-        self.on_status(f"Starting session '{session_name}' ({session_id})")
-
-        async def session_stream_loop():
-            try:
-                # Strip source_id prefix from metrics for filtering
-                filter_metrics = set()
-                if metrics:
-                    for m in metrics:
-                        if ":" in m:
-                            filter_metrics.add(m.split(":", 1)[1])
-                        else:
-                            filter_metrics.add(m)
-
-                while session_id in self._active_streams and self._current_session:
-                    all_readings = self.sensor_hub.read_all()
-                    if filter_metrics:
-                        readings = [r for r in all_readings if r.metric in filter_metrics]
-                    else:
-                        readings = all_readings
-                    points = [
-                        {
-                            "metric": r.metric,
-                            "value": r.value,
-                            "timestamp": int(time.time() * 1000),
-                            "tags": {"session_id": session_id},  # Tag with session
-                        }
-                        for r in readings
-                    ]
-                    await self._ws.send(json.dumps({
-                        "type": "telemetry",
-                        "points": points,
-                        "session_id": session_id,  # Include session_id at message level too
-                    }))
-                    await asyncio.sleep(interval_ms / 1000)
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:
-                self.on_status(f"Session stream error: {e}")
-
-        task = asyncio.create_task(session_stream_loop())
-        self._active_streams[session_id] = task
-
-        # Notify that session has started
-        await self._ws.send(json.dumps({
-            "type": "session_started",
-            "session_id": session_id,
-            "session_name": session_name,
-        }))
-
-    async def _stop_session(self, data: dict):
-        """Stop a recording session."""
-        session_id = data.get("session_id")
-
-        if session_id in self._active_streams:
-            self._active_streams[session_id].cancel()
-            del self._active_streams[session_id]
-            self.on_status(f"Stopped session {session_id}")
-
-        if self._current_session and self._current_session.get("session_id") == session_id:
-            self._current_session = None
-
-        # Notify that session has stopped
-        await self._ws.send(json.dumps({
-            "type": "session_stopped",
-            "session_id": session_id,
-        }))
-
-    async def _start_camera_stream(self, data: dict):
-        """Start streaming video frames from a camera."""
+    async def _start_camera(self, data: dict):
+        """Start camera streaming."""
         camera_id = data.get("camera_id")
         frame_rate = data.get("frame_rate", 10)
-        resolution = data.get("resolution")
-        quality = data.get("quality")
 
         if not self.camera_hub:
-            self.on_status("No camera hub configured - cannot stream video")
-            await self._ws.send(json.dumps({
-                "type": "error",
-                "message": "No cameras configured on this device",
-            }))
+            self.on_status("No cameras configured")
             return
 
         camera = self.camera_hub.get_camera(camera_id)
         if not camera:
             self.on_status(f"Camera not found: {camera_id}")
-            await self._ws.send(json.dumps({
-                "type": "error",
-                "message": f"Camera not found: {camera_id}",
-            }))
             return
 
-        # Apply configuration if provided
-        if resolution:
-            camera.resolution = tuple(resolution)
-        if quality:
-            camera.quality = quality
+        if data.get("resolution"):
+            camera.resolution = tuple(data["resolution"])
+        if data.get("quality"):
+            camera.quality = data["quality"]
         camera.frame_rate = frame_rate
 
-        self.on_status(f"Starting camera stream: {camera_id} @ {frame_rate}fps")
+        self.on_status(f"Camera {camera_id} @ {frame_rate}fps")
 
-        async def camera_stream_loop():
+        async def camera_loop():
             interval = 1.0 / frame_rate
             try:
-                # Initialize camera
                 camera.setup()
-
                 while camera_id in self._active_camera_streams:
                     frame = camera.capture()
                     if frame:
-                        # Base64 encode the JPEG data
-                        frame_b64 = base64.b64encode(frame.data).decode('ascii')
-
                         await self._ws.send(json.dumps({
                             "type": "video_frame",
                             "camera_id": camera_id,
-                            "frame": frame_b64,
+                            "frame": base64.b64encode(frame.data).decode('ascii'),
                             "width": frame.width,
                             "height": frame.height,
                             "timestamp": int(frame.timestamp * 1000),
-                            "tags": frame.tags,
                         }))
                     await asyncio.sleep(interval)
             except asyncio.CancelledError:
                 pass
-            except Exception as e:
-                self.on_status(f"Camera stream error: {e}")
             finally:
                 camera.cleanup()
 
-        task = asyncio.create_task(camera_stream_loop())
-        self._active_camera_streams[camera_id] = task
+        self._active_camera_streams[camera_id] = asyncio.create_task(camera_loop())
 
-    async def _stop_camera_stream(self, data: dict):
-        """Stop a running camera stream."""
+    async def _stop_camera(self, data: dict):
+        """Stop camera streaming."""
         camera_id = data.get("camera_id")
 
         if camera_id == "*":
-            # Stop all camera streams
             for task in self._active_camera_streams.values():
                 task.cancel()
             self._active_camera_streams.clear()
-            self.on_status("Stopped all camera streams")
         elif camera_id in self._active_camera_streams:
             self._active_camera_streams[camera_id].cancel()
             del self._active_camera_streams[camera_id]
-            self.on_status(f"Stopped camera stream: {camera_id}")
+
+        self.on_status(f"Stopped camera")
 
     async def _configure_camera(self, data: dict):
-        """Configure a camera on this device."""
-        camera_id = data.get("camera_id")
-        config = data.get("config", {})
-
+        """Configure a camera."""
         if not self.camera_hub:
             return
 
-        camera = self.camera_hub.get_camera(camera_id)
+        camera = self.camera_hub.get_camera(data.get("camera_id"))
         if camera:
-            try:
-                if "resolution" in config:
-                    camera.resolution = tuple(config["resolution"])
-                if "quality" in config:
-                    camera.quality = config["quality"]
-                if "frame_rate" in config:
-                    camera.frame_rate = config["frame_rate"]
-                self.on_status(f"Configured camera {camera_id}: {config}")
-            except Exception as e:
-                self.on_status(f"Failed to configure camera {camera_id}: {e}")
+            config = data.get("config", {})
+            if "resolution" in config:
+                camera.resolution = tuple(config["resolution"])
+            if "quality" in config:
+                camera.quality = config["quality"]
+            if "frame_rate" in config:
+                camera.frame_rate = config["frame_rate"]
+
+    # =========================================================================
+    # Remote Commands
+    # =========================================================================
 
     async def _execute_command(self, data: dict):
-        """Execute a shell command and stream output back."""
+        """Execute shell command and stream output."""
         command = data.get("command", "")
-        cmd_id = data.get("id", "unknown")
+        cmd_id = data.get("id", "cmd")
 
         if not command:
             return
 
-        self.on_status(f"Executing: {command}")
+        self.on_status(f"Running: {command}")
 
         await self._ws.send(json.dumps({
-            "type": "output",
-            "id": cmd_id,
-            "event": "start",
-            "command": command,
+            "type": "output", "id": cmd_id, "event": "start", "command": command
         }))
 
         try:
-            try:
-                args = shlex.split(command)
-            except ValueError as e:
-                await self._ws.send(json.dumps({
-                    "type": "output",
-                    "id": cmd_id,
-                    "event": "error",
-                    "error": f"Invalid command syntax: {e}",
-                }))
-                return
-
+            args = shlex.split(command)
             self._current_process = subprocess.Popen(
-                args,
-                shell=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                cwd=os.getcwd(),
+                args, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1, cwd=os.getcwd()
             )
 
             for line in iter(self._current_process.stdout.readline, ""):
                 if not self._running:
                     break
                 await self._ws.send(json.dumps({
-                    "type": "output",
-                    "id": cmd_id,
-                    "event": "data",
-                    "data": line,
+                    "type": "output", "id": cmd_id, "event": "data", "data": line
                 }))
 
-            return_code = self._current_process.wait()
-
+            code = self._current_process.wait()
             await self._ws.send(json.dumps({
-                "type": "output",
-                "id": cmd_id,
-                "event": "exit",
-                "code": return_code,
+                "type": "output", "id": cmd_id, "event": "exit", "code": code
             }))
 
         except Exception as e:
             await self._ws.send(json.dumps({
-                "type": "output",
-                "id": cmd_id,
-                "event": "error",
-                "error": str(e),
+                "type": "output", "id": cmd_id, "event": "error", "error": str(e)
             }))
-
         finally:
             self._current_process = None
 
-    def _cancel_current(self):
-        """Cancel the currently running command."""
+    def _cancel_command(self):
+        """Cancel running command."""
         if self._current_process:
             self._current_process.terminate()
-            self.on_status("Command cancelled")
+            self.on_status("Cancelled")
+
+    # =========================================================================
+    # Cleanup
+    # =========================================================================
 
     def disconnect(self):
-        """Disconnect from the server."""
+        """Disconnect and cleanup."""
         self._running = False
-        self._cancel_current()
+        self._recording = False
+        self._cancel_command()
+
         for task in self._active_streams.values():
             task.cancel()
         self._active_streams.clear()
+
         for task in self._active_camera_streams.values():
             task.cancel()
         self._active_camera_streams.clear()
+
         self._ws = None
+
+        if self._http_session:
+            self._http_session.close()
+            self._http_session = None
 
 
 def run_connector(

@@ -33,13 +33,20 @@ Usage:
 Note: Requires login first. Run 'plexus login' to connect your account.
 """
 
+import threading
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
 
-from plexus.config import get_api_key, get_source_id, get_endpoint, require_login
+from plexus.config import (
+    RetryConfig,
+    get_api_key,
+    get_endpoint,
+    get_source_id,
+    require_login,
+)
 
 # Flexible value type - supports any JSON-serializable value
 FlexValue = Union[int, float, str, bool, Dict[str, Any], List[Any]]
@@ -67,6 +74,8 @@ class Plexus:
         endpoint: API endpoint URL. Defaults to https://app.plexus.company
         source_id: Unique identifier for this source. Auto-generated if not provided.
         timeout: Request timeout in seconds. Default 10s.
+        retry_config: Configuration for retry behavior. If None, uses defaults.
+        max_buffer_size: Maximum number of points to buffer locally on failures. Default 10000.
 
     Raises:
         RuntimeError: If not logged in (no API key configured)
@@ -78,6 +87,8 @@ class Plexus:
         endpoint: Optional[str] = None,
         source_id: Optional[str] = None,
         timeout: float = 10.0,
+        retry_config: Optional[RetryConfig] = None,
+        max_buffer_size: int = 10000,
     ):
         self.api_key = api_key or get_api_key()
 
@@ -88,11 +99,17 @@ class Plexus:
         self.endpoint = (endpoint or get_endpoint()).rstrip("/")
         self.source_id = source_id or get_source_id()
         self.timeout = timeout
+        self.retry_config = retry_config or RetryConfig()
+        self.max_buffer_size = max_buffer_size
 
         self._session_id: Optional[str] = None
         self._session: Optional[requests.Session] = None
 
-        # Buffer for batch operations
+        # Buffer for failed sends (local storage on network issues)
+        self._failed_buffer: List[Dict[str, Any]] = []
+        self._buffer_lock = threading.Lock()
+
+        # Legacy buffer for batch operations (kept for compatibility)
         self._buffer: List[Dict[str, Any]] = []
         self._buffer_size = 100
 
@@ -201,34 +218,136 @@ class Plexus:
         return self._send_points(data_points)
 
     def _send_points(self, points: List[Dict[str, Any]]) -> bool:
-        """Send data points to the API."""
+        """Send data points to the API with retry and buffering.
+
+        Retry behavior:
+        - Retries on: Timeout, ConnectionError, HTTP 429 (rate limit), HTTP 5xx
+        - No retry on: HTTP 401/403 (auth errors), HTTP 400/422 (bad request)
+        - After max retries: buffers points locally for next send attempt
+        """
         if not self.api_key:
             raise AuthenticationError(
                 "No API key configured. Run 'plexus init' or set PLEXUS_API_KEY"
             )
 
+        # Include any previously buffered points
+        all_points = self._get_buffered_points() + points
+
         url = f"{self.endpoint}/api/ingest"
+        last_error: Optional[Exception] = None
 
-        try:
-            response = self._get_session().post(
-                url,
-                json={"points": points},
-                timeout=self.timeout,
-            )
+        for attempt in range(self.retry_config.max_retries + 1):
+            try:
+                response = self._get_session().post(
+                    url,
+                    json={"points": all_points},
+                    timeout=self.timeout,
+                )
 
-            if response.status_code == 401:
-                raise AuthenticationError("Invalid API key")
-            elif response.status_code == 403:
-                raise AuthenticationError("API key doesn't have write permissions")
-            elif response.status_code >= 400:
-                raise PlexusError(f"API error: {response.status_code} - {response.text}")
+                # Auth errors - don't retry, raise immediately
+                if response.status_code == 401:
+                    raise AuthenticationError("Invalid API key")
+                elif response.status_code == 403:
+                    raise AuthenticationError("API key doesn't have write permissions")
 
+                # Bad request errors - don't retry (client error)
+                elif response.status_code in (400, 422):
+                    raise PlexusError(
+                        f"Bad request: {response.status_code} - {response.text}"
+                    )
+
+                # Rate limit - retry with backoff
+                elif response.status_code == 429:
+                    last_error = PlexusError(f"Rate limited (429)")
+                    if attempt < self.retry_config.max_retries:
+                        time.sleep(self.retry_config.get_delay(attempt))
+                        continue
+                    break
+
+                # Server errors - retry with backoff
+                elif response.status_code >= 500:
+                    last_error = PlexusError(
+                        f"Server error: {response.status_code} - {response.text}"
+                    )
+                    if attempt < self.retry_config.max_retries:
+                        time.sleep(self.retry_config.get_delay(attempt))
+                        continue
+                    break
+
+                # Success - clear the buffer and return
+                elif response.status_code < 400:
+                    self._clear_buffer()
+                    return True
+
+                # Other 4xx errors - don't retry
+                else:
+                    raise PlexusError(
+                        f"API error: {response.status_code} - {response.text}"
+                    )
+
+            except requests.exceptions.Timeout:
+                last_error = PlexusError(f"Request timed out after {self.timeout}s")
+                if attempt < self.retry_config.max_retries:
+                    time.sleep(self.retry_config.get_delay(attempt))
+                    continue
+                break
+
+            except requests.exceptions.ConnectionError as e:
+                last_error = PlexusError(f"Connection failed: {e}")
+                if attempt < self.retry_config.max_retries:
+                    time.sleep(self.retry_config.get_delay(attempt))
+                    continue
+                break
+
+        # All retries failed - buffer the points for later
+        self._add_to_buffer(points)
+
+        if last_error:
+            raise last_error
+        raise PlexusError("Send failed after all retries")
+
+    def _add_to_buffer(self, points: List[Dict[str, Any]]) -> None:
+        """Add points to the local buffer for later retry."""
+        with self._buffer_lock:
+            self._failed_buffer.extend(points)
+            # Trim buffer if it exceeds max size (drop oldest points)
+            if len(self._failed_buffer) > self.max_buffer_size:
+                overflow = len(self._failed_buffer) - self.max_buffer_size
+                self._failed_buffer = self._failed_buffer[overflow:]
+
+    def _get_buffered_points(self) -> List[Dict[str, Any]]:
+        """Get a copy of buffered points without clearing."""
+        with self._buffer_lock:
+            return list(self._failed_buffer)
+
+    def _clear_buffer(self) -> None:
+        """Clear the failed points buffer."""
+        with self._buffer_lock:
+            self._failed_buffer.clear()
+
+    def buffer_size(self) -> int:
+        """Return the number of points currently buffered locally.
+
+        Points are buffered when sends fail after all retries.
+        They will be included in the next send attempt.
+        """
+        with self._buffer_lock:
+            return len(self._failed_buffer)
+
+    def flush_buffer(self) -> bool:
+        """Attempt to send all buffered points.
+
+        Returns:
+            True if buffer is empty (either was empty or successfully flushed)
+
+        Raises:
+            PlexusError: If flush fails (points remain in buffer)
+        """
+        if self.buffer_size() == 0:
             return True
 
-        except requests.exceptions.Timeout:
-            raise PlexusError(f"Request timed out after {self.timeout}s")
-        except requests.exceptions.ConnectionError as e:
-            raise PlexusError(f"Connection failed: {e}")
+        # Send with empty new points list - will include buffered points
+        return self._send_points([])
 
     @contextmanager
     def session(self, session_id: str, tags: Optional[Dict[str, str]] = None):

@@ -446,6 +446,70 @@ curl -X POST https://app.plexus.company/api/ingest \
   }"
 ```
 
+## Protocol Adapters
+
+Plexus supports protocol adapters for ingesting data from various sources.
+
+### CAN Bus Adapter
+
+Read CAN bus data with optional DBC signal decoding:
+
+```bash
+pip install plexus-agent[can]
+```
+
+```python
+from plexus.adapters import CANAdapter
+from plexus import Plexus
+
+plexus = Plexus(api_key="plx_xxx", source_id="vehicle-001")
+adapter = CANAdapter(
+    interface="socketcan",
+    channel="can0",
+    dbc_path="vehicle.dbc",  # Optional: decode signals
+)
+
+with adapter:
+    while True:
+        for metric in adapter.poll():
+            # Raw: can.raw.0x123 = "DEADBEEF"
+            # Decoded: engine_rpm = 2500
+            plexus.send(metric.name, metric.value, tags=metric.tags)
+```
+
+**Setup virtual CAN for testing (Linux):**
+
+```bash
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+
+# Send test frames
+cansend vcan0 123#DEADBEEF
+```
+
+**Supported interfaces:** socketcan, pcan, vector, kvaser, slcan, virtual
+
+### MQTT Adapter
+
+Bridge MQTT brokers to Plexus:
+
+```bash
+pip install plexus-agent[mqtt]
+```
+
+```python
+from plexus.adapters import MQTTAdapter
+
+adapter = MQTTAdapter(
+    broker="localhost",
+    topic="sensors/#",
+    port=1883,
+)
+adapter.connect()
+adapter.run(on_data=my_callback)
+```
+
 ## Python SDK with Sensor Drivers
 
 For Raspberry Pi and other Linux devices, the Python SDK includes sensor drivers:
