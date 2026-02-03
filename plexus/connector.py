@@ -101,8 +101,8 @@ class PlexusConnector:
 
         # 2. Discover from API
         try:
-            import httpx
-            resp = httpx.get(f"{self.endpoint}/api/config", timeout=5.0)
+            import requests
+            resp = requests.get(f"{self.endpoint}/api/config", timeout=5.0)
             if resp.status_code == 200:
                 config = resp.json()
                 ws_url = config.get("ws_url")
