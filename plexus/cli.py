@@ -315,6 +315,33 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
         except Exception as e:
             dim(f"Cameras      Error: {e}")
 
+    # Auto-detect CAN interfaces
+    can_adapters = None
+    try:
+        from plexus.adapters.can_detect import scan_can
+        detected_can = scan_can()
+        up_can = [c for c in detected_can if c.is_up]
+        down_can = [c for c in detected_can if not c.is_up]
+
+        if up_can:
+            can_adapters = up_can
+            label("CAN", f"{len(up_can)} interface{'s' if len(up_can) != 1 else ''} active")
+            for c in up_can:
+                bitrate_str = f" ({c.bitrate} bps)" if c.bitrate else ""
+                dim(f"             {Style.BULLET} {c.channel}{bitrate_str}")
+        elif down_can:
+            label("CAN", f"{len(down_can)} found (not configured)")
+            for c in down_can:
+                dim(f"             {Style.BULLET} {c.channel} (down)")
+            click.secho(
+                f"             Run: plexus scan --setup",
+                fg=Style.INFO,
+            )
+        else:
+            label("CAN", "None detected")
+    except Exception as e:
+        dim(f"CAN          Error: {e}")
+
     click.echo()
     divider()
     click.echo()
@@ -327,6 +354,7 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
             on_status=status_line,
             sensor_hub=sensor_hub,
             camera_hub=camera_hub,
+            can_adapters=can_adapters,
         )
     except KeyboardInterrupt:
         click.echo()
@@ -626,7 +654,8 @@ def status():
 @main.command()
 @click.option("--bus", "-b", default=1, type=int, help="I2C bus number")
 @click.option("--all", "-a", "show_all", is_flag=True, help="Show all I2C addresses")
-def scan(bus: int, show_all: bool):
+@click.option("--setup", is_flag=True, help="Auto-configure detected interfaces")
+def scan(bus: int, show_all: bool, setup: bool):
     """
     Scan for connected sensors and cameras.
 
@@ -637,6 +666,7 @@ def scan(bus: int, show_all: bool):
         plexus scan                    # Scan for sensors and cameras
         plexus scan -b 0               # Scan different I2C bus
         plexus scan --all              # Show all I2C addresses
+        plexus scan --setup            # Auto-configure CAN interfaces
     """
     header("Device Scan")
 
@@ -687,6 +717,43 @@ def scan(bus: int, show_all: bool):
             for s in sensors:
                 click.secho(f"    {Style.CHECK} {s.name}", fg=Style.SUCCESS)
                 dim(f"      {s.description}")
+        else:
+            dim("    None detected")
+    except Exception as e:
+        dim(f"    Error: {e}")
+
+    click.echo()
+
+    # Scan for CAN interfaces
+    info("CAN Interfaces")
+    try:
+        from plexus.adapters.can_detect import scan_can, setup_can, DEFAULT_BITRATE
+        detected_can = scan_can()
+        if detected_can:
+            for c in detected_can:
+                if c.is_up:
+                    bitrate_str = f", {c.bitrate} bps" if c.bitrate else ""
+                    click.secho(
+                        f"    {Style.CHECK} {c.channel} (up{bitrate_str})",
+                        fg=Style.SUCCESS,
+                    )
+                elif setup and c.interface == "socketcan":
+                    spinner = Spinner(f"Configuring {c.channel}...")
+                    spinner.start()
+                    ok = setup_can(c)
+                    if ok:
+                        spinner.stop(f"{c.channel} (up, {DEFAULT_BITRATE} bps)", success_status=True)
+                    else:
+                        spinner.stop(f"Failed to configure {c.channel} — try manually with sudo", success_status=False)
+                else:
+                    click.secho(
+                        f"    {Style.BULLET} {c.channel} (down)",
+                        fg=Style.WARNING,
+                    )
+                    if c.interface == "socketcan":
+                        hint(f"      Run: plexus scan --setup")
+                    elif c.interface == "slcan":
+                        dim(f"      Serial CAN adapter — configure with slcand")
         else:
             dim("    None detected")
     except Exception as e:

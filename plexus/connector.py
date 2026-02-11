@@ -40,6 +40,7 @@ from plexus.config import get_api_key, get_device_token, get_endpoint, get_sourc
 if TYPE_CHECKING:
     from plexus.sensors.base import SensorHub
     from plexus.cameras.base import CameraHub
+    from plexus.adapters.can_detect import DetectedCAN
 
 
 class PlexusConnector:
@@ -63,6 +64,7 @@ class PlexusConnector:
         on_status: Optional[Callable[[str], None]] = None,
         sensor_hub: Optional["SensorHub"] = None,
         camera_hub: Optional["CameraHub"] = None,
+        can_adapters: Optional[List["DetectedCAN"]] = None,
     ):
         # Device token is preferred (from pairing flow)
         self.device_token = device_token or get_device_token()
@@ -73,6 +75,7 @@ class PlexusConnector:
         self.on_status = on_status or (lambda x: None)
         self.sensor_hub = sensor_hub
         self.camera_hub = camera_hub
+        self.can_adapters = can_adapters
 
         self._ws = None
         self._running = False
@@ -192,6 +195,10 @@ class PlexusConnector:
                         "platform": platform.system(),
                         "sensors": self.sensor_hub.get_info() if self.sensor_hub else [],
                         "cameras": self.camera_hub.get_info() if self.camera_hub else [],
+                        "can": [
+                            {"interface": c.interface, "channel": c.channel, "bitrate": c.bitrate}
+                            for c in self.can_adapters
+                        ] if self.can_adapters else [],
                     }
                     if self.device_token:
                         auth_msg["device_token"] = self.device_token
@@ -512,6 +519,7 @@ def run_connector(
     on_status: Optional[Callable[[str], None]] = None,
     sensor_hub: Optional["SensorHub"] = None,
     camera_hub: Optional["CameraHub"] = None,
+    can_adapters: Optional[List["DetectedCAN"]] = None,
 ):
     """Run the connector (blocking)."""
     connector = PlexusConnector(
@@ -521,6 +529,7 @@ def run_connector(
         on_status=on_status,
         sensor_hub=sensor_hub,
         camera_hub=camera_hub,
+        can_adapters=can_adapters,
     )
 
     try:
