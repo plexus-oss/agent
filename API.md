@@ -40,10 +40,13 @@ Send telemetry data to Plexus using HTTP or WebSocket.
 
 ### Option 1: Web-Controlled Device (Recommended)
 
-Pair your device from the dashboard and control everything via UI:
+Set up your device with one command. Use an API key for fleet provisioning, or a pairing code for single devices:
 
 ```bash
-# On your device
+# With API key (fleet provisioning — get from Settings → Developer)
+curl -sL https://app.plexus.company/setup | bash -s -- --key plx_your_api_key
+
+# With pairing code (single device — get from app.plexus.company/fleet)
 curl -sL https://app.plexus.company/setup | bash -s -- --code ABC123
 ```
 
@@ -90,7 +93,7 @@ Device tokens are created automatically during pairing:
 For direct HTTP access without the agent:
 
 1. Sign up at [app.plexus.company](https://app.plexus.company)
-2. Go to Settings → Connections
+2. Go to Settings → Developer
 3. Create an API key (starts with `plx_`)
 
 ## HTTP API

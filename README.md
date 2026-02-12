@@ -1,15 +1,15 @@
 # Plexus Agent
 
-Send sensor data from any device to [Plexus](https://plexus.dev) in one line of code.
+Stream telemetry from any device to [Plexus](https://plexus.dev) — real-time observability for hardware systems.
 
 ```python
 from plexus import Plexus
 
 px = Plexus()
-px.send("temperature", 72.5)
+px.send("engine.rpm", 3450, tags={"unit": "A"})
 ```
 
-Works with Raspberry Pi, Linux, macOS — anything that runs Python 3.8+.
+Works on any Linux system — edge compute nodes, test rigs, fleet vehicles, ground stations.
 
 ## Install
 
@@ -17,20 +17,26 @@ Works with Raspberry Pi, Linux, macOS — anything that runs Python 3.8+.
 pip install plexus-agent
 ```
 
-With hardware support:
+With protocol support:
 
 ```bash
-pip install plexus-agent[sensors]    # I2C sensors (MPU6050, BME280)
-pip install plexus-agent[camera]     # USB cameras (OpenCV)
-pip install plexus-agent[picamera]   # Raspberry Pi Camera Module
-pip install plexus-agent[can]        # CAN bus
+pip install plexus-agent[sensors]    # I2C sensors (IMU, environmental)
+pip install plexus-agent[can]        # CAN bus with DBC decoding
 pip install plexus-agent[mqtt]       # MQTT bridge
+pip install plexus-agent[camera]     # USB cameras (OpenCV)
+pip install plexus-agent[ros]        # ROS1/ROS2 bag import
 pip install plexus-agent[all]        # Everything
 ```
 
 ## Quick Start
 
-There are two ways to use the agent depending on your use case.
+The fastest way to get started — one command, handles everything:
+
+```bash
+curl -sL https://app.plexus.company/setup | bash -s -- --key plx_your_api_key
+```
+
+This installs Python (if needed), installs the agent, configures your API key, and sets up auto-start. Get an API key from [app.plexus.company](https://app.plexus.company) → Settings → Developer.
 
 ### Option 1: Managed Device (recommended)
 
@@ -44,11 +50,14 @@ plexus pair --code ABC123
 plexus run
 ```
 
-That's it. The agent auto-detects connected sensors, cameras, and CAN interfaces. Control everything from the dashboard.
+The agent auto-detects connected sensors, cameras, and CAN interfaces. Control everything from the dashboard.
 
 ```bash
-# Optional: give your device a name
-plexus run --name "robot-arm-01"
+# Name the device for fleet identification
+plexus run --name "test-rig-01"
+
+# Stream system health (CPU, memory, disk, thermals)
+plexus run --sensor system
 
 # Bridge an MQTT broker
 plexus run --mqtt localhost:1883
@@ -59,42 +68,41 @@ plexus run --no-sensors --no-cameras
 
 ### Option 2: Direct HTTP
 
-Send data programmatically without the managed agent. Good for scripts, batch uploads, and embedded devices.
+Send data programmatically without the managed agent. Good for scripts, batch uploads, and custom integrations.
 
-1. Create an API key at [app.plexus.company](https://app.plexus.company) → Settings → Connections
+1. Create an API key at [app.plexus.company](https://app.plexus.company) → Settings → Developer
 2. Send data:
 
 ```python
 from plexus import Plexus
 
-px = Plexus(api_key="plx_xxxxx", source_id="sensor-001")
+px = Plexus(api_key="plx_xxxxx", source_id="test-rig-01")
 
-# Numbers
-px.send("temperature", 72.5)
-px.send("motor.rpm", 3450, tags={"motor_id": "A1"})
+# Numeric telemetry
+px.send("engine.rpm", 3450, tags={"unit": "A"})
+px.send("coolant.temperature", 82.3)
 
-# Strings, booleans, objects, arrays
-px.send("robot.state", "MOVING")
+# State and configuration
+px.send("vehicle.state", "RUNNING")
 px.send("motor.enabled", True)
 px.send("position", {"x": 1.5, "y": 2.3, "z": 0.8})
-px.send("joint_angles", [0.5, 1.2, -0.3, 0.0])
 
 # Batch send
 px.send_batch([
     ("temperature", 72.5),
-    ("humidity", 45.2),
     ("pressure", 1013.25),
+    ("vibration.rms", 0.42),
 ])
 ```
 
-You can also use plain HTTP from any language — see [API.md](API.md) for curl, JavaScript, Go, Arduino, and Bash examples.
+See [API.md](API.md) for curl, JavaScript, Go, and Bash examples.
 
 ## Authentication
 
 | Credential   | Prefix  | How to get it                              | Used by                     |
 |-------------|---------|--------------------------------------------|-----------------------------|
 | Device token | `plxd_` | `plexus pair` (automatic)                  | `plexus run` (WebSocket)    |
-| API key      | `plx_`  | Dashboard → Settings → Connections          | `Plexus()` client (HTTP)    |
+| API key      | `plx_`  | Dashboard → Settings → Developer          | `Plexus()` client (HTTP)    |
 
 Credentials are stored in `~/.plexus/config.json` or can be set via environment variables:
 
@@ -120,10 +128,10 @@ Run `plexus <command> --help` for full options.
 Group related data for analysis and playback:
 
 ```python
-with px.session("motor-test-001"):
+with px.session("thermal-cycle-001"):
     while running:
         px.send("temperature", read_temp())
-        px.send("vibration", read_accel())
+        px.send("vibration.rms", read_accel())
         time.sleep(0.01)
 ```
 
@@ -135,7 +143,7 @@ Auto-detect all connected I2C sensors:
 from plexus import Plexus
 from plexus.sensors import auto_sensors
 
-hub = auto_sensors()       # finds MPU6050, BME280, etc.
+hub = auto_sensors()       # finds IMU, environmental, etc.
 hub.run(Plexus())          # streams forever
 ```
 
@@ -150,27 +158,33 @@ hub.add(BME280(sample_rate=1))
 hub.run(Plexus())
 ```
 
-Supported sensors:
+Built-in sensor drivers:
 
-| Sensor  | Type                | Metrics                                          | I2C Address |
+| Sensor  | Type                | Metrics                                          | Interface   |
 |---------|---------------------|--------------------------------------------------|-------------|
-| MPU6050 | 6-axis IMU          | accel_x/y/z, gyro_x/y/z                         | 0x68, 0x69  |
-| MPU9250 | 9-axis IMU          | accel_x/y/z, gyro_x/y/z                         | 0x68        |
-| BME280  | Temp/humidity/press | temperature, humidity, pressure                   | 0x76, 0x77  |
+| MPU6050 | 6-axis IMU          | accel_x/y/z, gyro_x/y/z                         | I2C (0x68)  |
+| MPU9250 | 9-axis IMU          | accel_x/y/z, gyro_x/y/z                         | I2C (0x68)  |
+| BME280  | Environmental       | temperature, humidity, pressure                   | I2C (0x76)  |
+| System  | System health       | cpu.temperature, memory.used_pct, disk.used_pct, cpu.load | None  |
 
 ### Custom Sensors
+
+Write a driver for any hardware by extending `BaseSensor`:
 
 ```python
 from plexus.sensors import BaseSensor, SensorReading
 
-class VoltageSensor(BaseSensor):
-    name = "VoltageSensor"
-    metrics = ["voltage", "current"]
+class StrainGauge(BaseSensor):
+    name = "StrainGauge"
+    description = "Load cell strain gauge via ADC"
+    metrics = ["strain", "force_n"]
 
     def read(self):
+        raw = self.adc.read_channel(0)
+        strain = (raw / 4096.0) * self.calibration_factor
         return [
-            SensorReading("voltage", read_adc(0) * 3.3),
-            SensorReading("current", read_adc(1) * 0.1),
+            SensorReading("strain", round(strain, 6)),
+            SensorReading("force_n", round(strain * self.k_factor, 2)),
         ]
 ```
 
@@ -252,7 +266,7 @@ See [API.md](API.md) for the full HTTP and WebSocket protocol specification, inc
 
 - Request/response formats
 - All message types
-- Code examples in Python, JavaScript, Go, Arduino/ESP32, and Bash
+- Code examples in Python, JavaScript, Go, and Bash
 - Error codes
 - Best practices
 

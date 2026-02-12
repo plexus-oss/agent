@@ -6,7 +6,8 @@ for both `plexus run` and `plexus scan`.
 """
 
 import logging
-from typing import Optional, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import List, Optional, Tuple, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
@@ -72,3 +73,43 @@ def detect_can() -> tuple[Optional[list["DetectedCAN"]], list["DetectedCAN"], li
     except Exception as e:
         logger.debug(f"CAN detection failed: {e}")
         return None, [], []
+
+
+@dataclass
+class SensorInfo:
+    """Lightweight info object for display (matches DetectedSensor pattern)."""
+    name: str
+    description: str
+
+
+def detect_named_sensors(
+    sensor_types: List[str],
+) -> Tuple[Optional["SensorHub"], List[SensorInfo]]:
+    """Create a SensorHub from explicit --sensor CLI arguments.
+
+    Args:
+        sensor_types: List of sensor type names (e.g. ["system"])
+
+    Returns:
+        (sensor_hub or None, list of SensorInfo for display)
+    """
+    from plexus.sensors import SENSOR_REGISTRY, SensorHub
+
+    hub = SensorHub()
+    info_list = []
+
+    for sensor_type in sensor_types:
+        sensor_type = sensor_type.lower()
+        if sensor_type not in SENSOR_REGISTRY:
+            valid = ", ".join(sorted(SENSOR_REGISTRY.keys()))
+            raise ValueError(f"Unknown sensor type '{sensor_type}'. Valid types: {valid}")
+
+        driver_class = SENSOR_REGISTRY[sensor_type]
+        sensor = driver_class()
+        hub.add(sensor)
+        info_list.append(SensorInfo(name=sensor.name, description=sensor.description))
+
+    if not info_list:
+        return None, []
+
+    return hub, info_list

@@ -3,12 +3,16 @@
 # Plexus Agent Setup Script
 #
 # Usage:
-#   curl -sL https://app.plexus.company/setup | bash
+#   curl -sL https://app.plexus.company/setup | bash -s -- --key plx_abc123
 #   curl -sL https://app.plexus.company/setup | bash -s -- --code ABC123
 #
 # This script:
-#   1. Installs the Plexus agent
-#   2. Pairs the device with your account (if code provided)
+#   1. Installs Python if missing
+#   2. Installs the Plexus agent
+#   3. Configures API key or pairs with a code
+#
+# Note: The canonical version of this script is served from the frontend
+# at app/setup/route.ts. This copy is for reference/offline use.
 #
 
 set -e
@@ -22,12 +26,17 @@ NC='\033[0m' # No Color
 
 # Parse arguments
 PAIRING_CODE=""
+API_KEY=""
 DEVICE_NAME=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --code|-c)
             PAIRING_CODE="$2"
+            shift 2
+            ;;
+        --api-key|--key|-k)
+            API_KEY="$2"
             shift 2
             ;;
         --name|-n)
@@ -52,18 +61,39 @@ ARCH=$(uname -m)
 
 echo -e "  System:  ${CYAN}$OS $ARCH${NC}"
 
-# Check for Python
+# Check for Python — auto-install if missing
 if command -v python3 &> /dev/null; then
     PYTHON=python3
 elif command -v python &> /dev/null; then
     PYTHON=python
 else
-    echo -e "  ${RED}Error: Python not found${NC}"
-    echo ""
-    echo "  Please install Python 3.8+ first:"
-    echo "    sudo apt install python3 python3-pip"
-    echo ""
-    exit 1
+    echo -e "  ${YELLOW}Python not found — installing...${NC}"
+    if command -v apt-get &> /dev/null; then
+        sudo apt-get update -qq && sudo apt-get install -y -qq python3 python3-pip
+    elif command -v dnf &> /dev/null; then
+        sudo dnf install -y -q python3 python3-pip
+    elif command -v yum &> /dev/null; then
+        sudo yum install -y -q python3 python3-pip
+    elif command -v brew &> /dev/null; then
+        brew install python3
+    else
+        echo -e "  ${RED}Could not install Python automatically${NC}"
+        echo -e "  ${CYAN}Install Python 3.8+ manually, then re-run this script${NC}"
+        echo ""
+        exit 1
+    fi
+
+    # Re-detect after install
+    if command -v python3 &> /dev/null; then
+        PYTHON=python3
+    elif command -v python &> /dev/null; then
+        PYTHON=python
+    else
+        echo -e "  ${RED}Python installation failed${NC}"
+        echo ""
+        exit 1
+    fi
+    echo -e "  ${GREEN}✓ Python installed${NC}"
 fi
 
 PYTHON_VERSION=$($PYTHON --version 2>&1 | cut -d' ' -f2)
@@ -168,11 +198,66 @@ fi
 echo -e "  ${GREEN}✓ Installed${NC}"
 echo ""
 
-# Step 2: Pair the device
+# Step 2: Enable I2C and install diagnostic tools (Linux only)
 echo "─────────────────────────────────────────"
 echo ""
 
-if [ -n "$PAIRING_CODE" ]; then
+if [ "$OS" = "Linux" ]; then
+    echo "  Setting up I2C support..."
+    echo ""
+
+    # Install i2c-tools for hardware verification
+    if ! command -v i2cdetect &> /dev/null; then
+        echo "  Installing i2c-tools..."
+        if [ "$EUID" -eq 0 ]; then
+            apt-get install -y -qq i2c-tools
+        elif sudo -n true 2>/dev/null; then
+            sudo apt-get install -y -qq i2c-tools
+        else
+            echo -e "  ${YELLOW}Could not install i2c-tools automatically.${NC}"
+            echo "  Run manually: sudo apt install i2c-tools"
+        fi
+    fi
+
+    # Enable I2C interface if raspi-config is available
+    if command -v raspi-config &> /dev/null; then
+        if ! grep -q "^dtparam=i2c_arm=on" /boot/config.txt 2>/dev/null && \
+           ! grep -q "^dtparam=i2c_arm=on" /boot/firmware/config.txt 2>/dev/null; then
+            echo -e "  ${YELLOW}I2C may not be enabled.${NC}"
+            echo "  Enable it with: sudo raspi-config → Interface Options → I2C"
+            echo ""
+        fi
+    fi
+
+    # Scan I2C bus and show detected devices
+    if command -v i2cdetect &> /dev/null; then
+        echo "  Scanning I2C bus for connected sensors..."
+        echo ""
+        i2cdetect -y 1 2>/dev/null && echo "" || echo -e "  ${YELLOW}I2C bus scan failed — is I2C enabled?${NC}"
+
+        echo "  Common sensor addresses:"
+        echo "    0x68 = MPU6050/MPU9250 (IMU)"
+        echo "    0x76 = BME280 (temp/humidity/pressure)"
+        echo "    0x48 = PCF8591 (ADC)"
+        echo ""
+    fi
+
+    echo -e "  ${GREEN}✓ I2C ready${NC}"
+    echo ""
+fi
+
+# Step 3: Pair the device
+echo "─────────────────────────────────────────"
+echo ""
+
+if [ -n "$API_KEY" ]; then
+    # API key flow — write config and skip pairing
+    mkdir -p "$HOME/.plexus"
+    echo "{\"api_key\":\"$API_KEY\"}" > "$HOME/.plexus/config.json"
+    export PLEXUS_API_KEY="$API_KEY"
+    echo -e "  ${GREEN}✓ API key configured${NC}"
+    echo ""
+elif [ -n "$PAIRING_CODE" ]; then
     echo "  Pairing with code: $PAIRING_CODE"
     echo ""
 
@@ -193,7 +278,7 @@ p.write_text(json.dumps(c, indent=2))
         fi
     fi
 else
-    echo "  No pairing code provided."
+    echo "  No pairing code or API key provided."
     echo ""
     echo "  To pair this device:"
     echo ""

@@ -34,26 +34,36 @@ Supported Sensors:
     - MPU6050: 6-axis IMU (accelerometer + gyroscope)
     - MPU9250: 9-axis IMU (accelerometer + gyroscope + magnetometer)
     - BME280: Environmental (temperature, humidity, pressure)
+    - SystemSensor: System health (CPU temp, memory, disk, load)
 """
 
 from .base import BaseSensor, SensorReading, SensorHub
 from .mpu6050 import MPU6050, MPU9250
 from .bme280 import BME280
 from .auto import scan_sensors, auto_sensors, scan_i2c, DetectedSensor
+from .system import SystemSensor
 
 __all__ = [
     # Base classes
     "BaseSensor",
     "SensorReading",
     "SensorHub",
-    # IMU sensors
+    # I2C sensors
     "MPU6050",
     "MPU9250",
-    # Environmental sensors
     "BME280",
+    # System
+    "SystemSensor",
     # Auto-detection
     "scan_sensors",
     "auto_sensors",
     "scan_i2c",
     "DetectedSensor",
+    # Registry
+    "SENSOR_REGISTRY",
 ]
+
+# Maps CLI --sensor names to driver classes
+SENSOR_REGISTRY = {
+    "system": SystemSensor,
+}

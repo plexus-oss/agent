@@ -232,9 +232,10 @@ def main():
 @click.option("--no-sensors", is_flag=True, help="Disable sensor auto-detection")
 @click.option("--no-cameras", is_flag=True, help="Disable camera auto-detection")
 @click.option("--bus", "-b", default=1, type=int, help="I2C bus number for sensors")
+@click.option("--sensor", "-s", "sensor_types", multiple=True, help="Sensor type to use (system). Repeatable.")
 @click.option("--mqtt", "mqtt_broker", default=None, help="MQTT broker to bridge (e.g. localhost:1883)")
 @click.option("--mqtt-topic", default="sensors/#", help="MQTT topic to subscribe to")
-def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int, mqtt_broker: Optional[str], mqtt_topic: str):
+def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int, sensor_types: tuple, mqtt_broker: Optional[str], mqtt_topic: str):
     """
     Start the Plexus agent.
 
@@ -247,6 +248,7 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int, mqtt_
 
         plexus run                                  # Start the agent
         plexus run --name "robot-01"                # With custom name
+        plexus run --sensor system                  # System health metrics
         plexus run --no-sensors                     # Without sensor detection
         plexus run --no-cameras                     # Without camera detection
         plexus run --mqtt localhost:1883            # Bridge MQTT data
@@ -292,9 +294,22 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int, mqtt_
     label("Source", name or source_id)
     label("Endpoint", endpoint)
 
-    # Auto-detect hardware
+    # Detect / configure sensors
     sensor_hub = None
-    if not no_sensors:
+    if sensor_types:
+        # Explicit --sensor flag: use named sensor registry
+        from plexus.detect import detect_named_sensors
+        try:
+            sensor_hub, sensors = detect_named_sensors(list(sensor_types))
+            if sensors:
+                label("Sensors", f"{len(sensors)} configured")
+                for s in sensors:
+                    dim(f"             {Style.BULLET} {s.name}")
+        except ValueError as e:
+            error(str(e))
+            sys.exit(1)
+    elif not no_sensors:
+        # Auto-detect I2C sensors
         sensor_hub, sensors = detect_sensors(bus)
         if sensors:
             label("Sensors", f"{len(sensors)} detected")
