@@ -54,6 +54,18 @@ from plexus.adapters.registry import register_adapter
 
 logger = logging.getLogger(__name__)
 
+# Optional dependencies — imported at module level so they can be
+# mocked in tests with @patch("plexus.adapters.can.can") etc.
+try:
+    import can
+except ImportError:
+    can = None  # type: ignore[assignment]
+
+try:
+    import cantools
+except ImportError:
+    cantools = None  # type: ignore[assignment]
+
 
 @register_adapter(
     "can",
@@ -155,9 +167,13 @@ class CANAdapter(ProtocolAdapter):
 
     def connect(self) -> bool:
         """Connect to CAN bus interface."""
-        try:
-            import can
+        if can is None:
+            self._set_state(AdapterState.ERROR, "python-can not installed")
+            raise ConnectionError(
+                "python-can is required. Install with: pip install plexus-agent[can]"
+            )
 
+        try:
             self._set_state(AdapterState.CONNECTING)
             logger.info(
                 f"Connecting to CAN bus: {self.interface}:{self.channel} "
@@ -186,11 +202,6 @@ class CANAdapter(ProtocolAdapter):
             logger.info(f"Connected to CAN bus: {self.channel}")
             return True
 
-        except ImportError:
-            self._set_state(AdapterState.ERROR, "python-can not installed")
-            raise ConnectionError(
-                "python-can is required. Install with: pip install plexus-agent[can]"
-            )
         except Exception as e:
             self._set_state(AdapterState.ERROR, str(e))
             logger.error(f"Failed to connect to CAN bus: {e}")
@@ -198,9 +209,15 @@ class CANAdapter(ProtocolAdapter):
 
     def _load_dbc(self, dbc_path: str) -> None:
         """Load a DBC file for signal decoding."""
-        try:
-            import cantools
+        if cantools is None:
+            logger.warning(
+                "cantools not installed. DBC decoding disabled. "
+                "Install with: pip install cantools"
+            )
+            self._db = None
+            return
 
+        try:
             logger.info(f"Loading DBC file: {dbc_path}")
             self._db = cantools.database.load_file(dbc_path)
             logger.info(
@@ -211,12 +228,6 @@ class CANAdapter(ProtocolAdapter):
             for msg in self._db.messages:
                 self._message_cache[msg.frame_id] = msg
 
-        except ImportError:
-            logger.warning(
-                "cantools not installed. DBC decoding disabled. "
-                "Install with: pip install cantools"
-            )
-            self._db = None
         except FileNotFoundError:
             logger.error(f"DBC file not found: {dbc_path}")
             self._db = None
@@ -366,8 +377,6 @@ class CANAdapter(ProtocolAdapter):
             raise ProtocolError("Not connected to CAN bus")
 
         try:
-            import can
-
             message = can.Message(
                 arbitration_id=arbitration_id,
                 data=data,

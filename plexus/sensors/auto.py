@@ -16,10 +16,13 @@ Usage:
     hub.run(Plexus())
 """
 
+import logging
 from typing import List, Dict, Type, Optional, Tuple
 from dataclasses import dataclass
 
 from .base import BaseSensor, SensorHub
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -139,8 +142,8 @@ def scan_sensors(bus: int = 1) -> List[DetectedSensor]:
                                 description=driver.description,
                             ))
                             break  # Don't try other drivers for same address
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Sensor probe failed at 0x{address:02X}: {e}")
 
     return detected
 

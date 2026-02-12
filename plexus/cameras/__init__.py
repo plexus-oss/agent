@@ -26,7 +26,6 @@ from plexus.cameras.auto import (
     scan_usb_cameras,
     scan_pi_cameras,
     auto_cameras,
-    get_camera_info,
 )
 
 # Optional imports - only available if dependencies installed
@@ -55,5 +54,4 @@ __all__ = [
     "scan_usb_cameras",
     "scan_pi_cameras",
     "auto_cameras",
-    "get_camera_info",
 ]

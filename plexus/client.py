@@ -33,6 +33,7 @@ Usage:
 Note: Requires login first. Run 'plexus login' to connect your account.
 """
 
+import logging
 import threading
 import time
 from contextlib import contextmanager
@@ -40,6 +41,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
 
+from plexus.buffer import BufferBackend, MemoryBuffer, SqliteBuffer
 from plexus.config import (
     RetryConfig,
     get_api_key,
@@ -47,6 +49,8 @@ from plexus.config import (
     get_source_id,
     require_login,
 )
+
+logger = logging.getLogger(__name__)
 
 # Flexible value type - supports any JSON-serializable value
 FlexValue = Union[int, float, str, bool, Dict[str, Any], List[Any]]
@@ -89,6 +93,8 @@ class Plexus:
         timeout: float = 10.0,
         retry_config: Optional[RetryConfig] = None,
         max_buffer_size: int = 10000,
+        persistent_buffer: bool = False,
+        buffer_path: Optional[str] = None,
     ):
         self.api_key = api_key or get_api_key()
 
@@ -105,13 +111,13 @@ class Plexus:
         self._session_id: Optional[str] = None
         self._session: Optional[requests.Session] = None
 
-        # Buffer for failed sends (local storage on network issues)
-        self._failed_buffer: List[Dict[str, Any]] = []
-        self._buffer_lock = threading.Lock()
-
-        # Legacy buffer for batch operations (kept for compatibility)
-        self._buffer: List[Dict[str, Any]] = []
-        self._buffer_size = 100
+        # Pluggable buffer backend for failed sends
+        if persistent_buffer:
+            self._buffer: BufferBackend = SqliteBuffer(
+                path=buffer_path, max_size=max_buffer_size
+            )
+        else:
+            self._buffer: BufferBackend = MemoryBuffer(max_size=max_buffer_size)
 
     def _get_session(self) -> requests.Session:
         """Get or create a requests session for connection pooling."""
@@ -122,6 +128,22 @@ class Plexus:
             self._session.headers["Content-Type"] = "application/json"
             self._session.headers["User-Agent"] = "agent/0.1.0"
         return self._session
+
+    @staticmethod
+    def _normalize_ts_ms(timestamp: Optional[float] = None) -> int:
+        """Normalize a timestamp to milliseconds.
+
+        Accepts:
+            - None: returns current time in ms
+            - float seconds (e.g. time.time()): converts to ms
+            - int/float ms: returned as-is
+        """
+        if timestamp is None:
+            return int(time.time() * 1000)
+        # Heuristic: values < 1e12 are seconds
+        if timestamp > 0 and timestamp < 1e12:
+            return int(timestamp * 1000)
+        return int(timestamp)
 
     def _make_point(
         self,
@@ -142,7 +164,7 @@ class Plexus:
         point = {
             "metric": metric,
             "value": value,
-            "timestamp": timestamp or time.time(),
+            "timestamp": self._normalize_ts_ms(timestamp),
             "source_id": self.source_id,
         }
         if tags:
@@ -258,7 +280,7 @@ class Plexus:
 
                 # Rate limit - retry with backoff
                 elif response.status_code == 429:
-                    last_error = PlexusError(f"Rate limited (429)")
+                    last_error = PlexusError("Rate limited (429)")
                     if attempt < self.retry_config.max_retries:
                         time.sleep(self.retry_config.get_delay(attempt))
                         continue
@@ -308,22 +330,15 @@ class Plexus:
 
     def _add_to_buffer(self, points: List[Dict[str, Any]]) -> None:
         """Add points to the local buffer for later retry."""
-        with self._buffer_lock:
-            self._failed_buffer.extend(points)
-            # Trim buffer if it exceeds max size (drop oldest points)
-            if len(self._failed_buffer) > self.max_buffer_size:
-                overflow = len(self._failed_buffer) - self.max_buffer_size
-                self._failed_buffer = self._failed_buffer[overflow:]
+        self._buffer.add(points)
 
     def _get_buffered_points(self) -> List[Dict[str, Any]]:
         """Get a copy of buffered points without clearing."""
-        with self._buffer_lock:
-            return list(self._failed_buffer)
+        return self._buffer.get_all()
 
     def _clear_buffer(self) -> None:
         """Clear the failed points buffer."""
-        with self._buffer_lock:
-            self._failed_buffer.clear()
+        self._buffer.clear()
 
     def buffer_size(self) -> int:
         """Return the number of points currently buffered locally.
@@ -331,8 +346,7 @@ class Plexus:
         Points are buffered when sends fail after all retries.
         They will be included in the next send attempt.
         """
-        with self._buffer_lock:
-            return len(self._failed_buffer)
+        return self._buffer.size()
 
     def flush_buffer(self) -> bool:
         """Attempt to send all buffered points.
@@ -409,6 +423,8 @@ class Plexus:
         if self._session:
             self._session.close()
             self._session = None
+        if hasattr(self._buffer, "close"):
+            self._buffer.close()
 
     def __enter__(self):
         return self

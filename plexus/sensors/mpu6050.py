@@ -149,16 +149,14 @@ class MPU6050(BaseSensor):
 
 class MPU9250(MPU6050):
     """
-    MPU9250 9-axis IMU sensor driver.
+    MPU9250 IMU sensor driver.
 
-    Same as MPU6050 but includes magnetometer.
-    Magnetometer requires additional setup (AK8963 on auxiliary I2C).
-
-    For now, this provides the same 6-axis data as MPU6050.
-    Magnetometer support can be added later.
+    The MPU9250 contains an MPU6500 (accel + gyro) and an AK8963 magnetometer
+    on an auxiliary I2C bus. This driver currently reads the 6-axis accel/gyro
+    data. Magnetometer support requires enabling the AK8963 pass-through mode
+    and is not yet implemented.
     """
 
     name = "MPU9250"
-    description = "9-axis IMU (accelerometer + gyroscope + magnetometer)"
+    description = "6-axis IMU (accelerometer + gyroscope) — magnetometer not yet supported"
     metrics = ["accel_x", "accel_y", "accel_z", "gyro_x", "gyro_y", "gyro_z"]
-    # TODO: Add mag_x, mag_y, mag_z when magnetometer support is implemented

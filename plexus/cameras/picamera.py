@@ -4,16 +4,17 @@ Raspberry Pi Camera Module driver using picamera2.
 Supports Pi Camera Module v1, v2, v3, and HQ Camera.
 """
 
+import logging
 import time
 from typing import Optional, Tuple
 
 from plexus.cameras.base import BaseCamera, CameraFrame
 
+logger = logging.getLogger(__name__)
+
 # picamera2 is optional - only imported when PiCamera is used
 try:
     from picamera2 import Picamera2
-    from picamera2.encoders import JpegEncoder
-    from picamera2.outputs import FileOutput
     import io
     PICAMERA_AVAILABLE = True
 except ImportError:
@@ -138,7 +139,8 @@ class PiCamera(BaseCamera):
                 tags=self.tags.copy(),
             )
 
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Pi camera capture failed: {e}")
             return None
 
     def is_available(self) -> bool:

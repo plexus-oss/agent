@@ -155,3 +155,15 @@ def require_login() -> None:
         raise RuntimeError(
             "Not logged in. Run 'plexus login' to connect your account."
         )
+
+
+def get_command_allowlist() -> Optional[list]:
+    """Get command allowlist from config. If set, only matching commands will execute."""
+    config = load_config()
+    return config.get("command_allowlist")
+
+
+def get_command_denylist() -> Optional[list]:
+    """Get command denylist from config. Matching commands will be blocked."""
+    config = load_config()
+    return config.get("command_denylist")

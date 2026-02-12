@@ -39,7 +39,7 @@ Supported Sensors:
 from .base import BaseSensor, SensorReading, SensorHub
 from .mpu6050 import MPU6050, MPU9250
 from .bme280 import BME280
-from .auto import scan_sensors, auto_sensors, scan_i2c, DetectedSensor, get_sensor_info
+from .auto import scan_sensors, auto_sensors, scan_i2c, DetectedSensor
 
 __all__ = [
     # Base classes
@@ -56,5 +56,4 @@ __all__ = [
     "auto_sensors",
     "scan_i2c",
     "DetectedSensor",
-    "get_sensor_info",
 ]

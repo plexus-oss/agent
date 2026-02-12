@@ -30,6 +30,7 @@ Requires: pip install plexus-agent[mqtt]
 """
 
 import json
+import logging
 import time
 from typing import Any, List, Optional
 
@@ -40,6 +41,8 @@ from plexus.adapters.base import (
     AdapterState,
 )
 from plexus.adapters.registry import AdapterRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class MQTTAdapter(ProtocolAdapter):
@@ -215,9 +218,8 @@ class MQTTAdapter(ProtocolAdapter):
                 self._pending_metrics.extend(metrics)
                 self._emit_data(metrics)
                 self.on_data(metrics)
-        except Exception:
-            # Log but don't crash on parse errors
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to parse MQTT message: {e}")
 
     def _parse_message(self, topic: str, payload: bytes) -> List[Metric]:
         """

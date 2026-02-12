@@ -4,11 +4,14 @@ Camera auto-detection utilities.
 Scans for available cameras and creates appropriate drivers.
 """
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import List, Optional, Set, Tuple, Type
 
 from plexus.cameras.base import BaseCamera, CameraHub
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -119,8 +122,8 @@ def scan_pi_cameras() -> List[DetectedCamera]:
                 driver=PiCamera,
                 description=f"Raspberry Pi Camera: {model}",
             ))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Pi camera scan failed: {e}")
 
     return detected
 
@@ -188,8 +191,8 @@ def auto_cameras(
         try:
             camera = camera_info.driver(**kwargs)
             hub.add(camera)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to create {camera_info.name}: {e}")
 
     return hub
 

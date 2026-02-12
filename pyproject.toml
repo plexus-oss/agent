@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "plexus-agent"
-version = "0.3.17"
+version = "0.3.18"
 description = "Send sensor data to Plexus in one line of code"
 readme = "README.md"
 license = "Apache-2.0"
@@ -38,10 +38,6 @@ mqtt = ["paho-mqtt>=1.6.0"]
 ros = [
     "rosbags>=0.9.0",           # ROS1/ROS2 bag reading
     "mcap>=1.0.0",               # MCAP format support
-]
-video = [
-    "opencv-python>=4.8.0",      # Video frame extraction
-    "numpy>=1.20.0",
 ]
 camera = [
     "opencv-python>=4.8.0",      # USB webcam support

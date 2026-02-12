@@ -13,7 +13,7 @@ Usage:
 import sys
 import time
 import threading
-from typing import Optional, Callable
+from typing import Optional
 
 import click
 
@@ -27,7 +27,6 @@ from plexus.config import (
     get_endpoint,
     get_source_id,
     get_config_path,
-    is_logged_in,
 )
 
 
@@ -152,6 +151,65 @@ def status_line(msg: str):
     click.echo(f"  {msg}")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _auto_register(api_key: str, endpoint: str, name: Optional[str]) -> tuple[str, str]:
+    """Auto-register device with API key, returns (device_token, source_id).
+
+    Raises on failure (requests errors, bad status).
+    """
+    import socket
+    import platform
+    import requests
+
+    hostname = socket.gethostname()
+    platform_info = f"{platform.system()} {platform.machine()}"
+
+    response = requests.post(
+        f"{endpoint}/api/sources/register",
+        headers={
+            "x-api-key": api_key,
+            "Content-Type": "application/json",
+        },
+        json={
+            "name": name,
+            "hostname": hostname,
+            "platform": platform_info,
+        },
+        timeout=30,
+    )
+
+    if response.status_code == 200:
+        data = response.json()
+        device_token = data["device_token"]
+        source_id = data["source_id"]
+        org_id = data.get("org_id")
+
+        config = load_config()
+        config["device_token"] = device_token
+        config["source_id"] = source_id
+        if org_id:
+            config["org_id"] = org_id
+        save_config(config)
+
+        if data.get("existing"):
+            success(f"Reconnected as {source_id}")
+        else:
+            success(f"Registered as {source_id}")
+        click.echo()
+
+        return device_token, source_id
+    else:
+        error_msg = response.json().get("error", "Registration failed")
+        raise RuntimeError(f"Registration failed: {error_msg}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
 @click.group()
 @click.version_option(version=__version__, prog_name="plexus")
 def main():
@@ -174,7 +232,9 @@ def main():
 @click.option("--no-sensors", is_flag=True, help="Disable sensor auto-detection")
 @click.option("--no-cameras", is_flag=True, help="Disable camera auto-detection")
 @click.option("--bus", "-b", default=1, type=int, help="I2C bus number for sensors")
-def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
+@click.option("--mqtt", "mqtt_broker", default=None, help="MQTT broker to bridge (e.g. localhost:1883)")
+@click.option("--mqtt-topic", default="sensors/#", help="MQTT topic to subscribe to")
+def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int, mqtt_broker: Optional[str], mqtt_topic: str):
     """
     Start the Plexus agent.
 
@@ -185,15 +245,14 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
 
     Examples:
 
-        plexus run                     # Start the agent
-        plexus run --name "robot-01"   # With custom name
-        plexus run --no-sensors        # Without sensor detection
-        plexus run --no-cameras        # Without camera detection
+        plexus run                                  # Start the agent
+        plexus run --name "robot-01"                # With custom name
+        plexus run --no-sensors                     # Without sensor detection
+        plexus run --no-cameras                     # Without camera detection
+        plexus run --mqtt localhost:1883            # Bridge MQTT data
     """
     from plexus.connector import run_connector
-    import socket
-    import platform
-    import requests
+    from plexus.detect import detect_sensors, detect_cameras, detect_can
 
     device_token = get_device_token()
     api_key = get_api_key()
@@ -212,56 +271,10 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
     if api_key and not device_token:
         header("Plexus Agent")
         info("Auto-registering device...")
-
         try:
-            # Get device info for registration
-            hostname = socket.gethostname()
-            platform_info = f"{platform.system()} {platform.machine()}"
-
-            # Call registration endpoint
-            response = requests.post(
-                f"{endpoint}/api/sources/register",
-                headers={
-                    "x-api-key": api_key,
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "name": name,
-                    "hostname": hostname,
-                    "platform": platform_info,
-                },
-                timeout=30,
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                device_token = data["device_token"]
-                source_id = data["source_id"]
-                org_id = data.get("org_id")
-
-                # Save credentials
-                config = load_config()
-                config["device_token"] = device_token
-                config["source_id"] = source_id
-                if org_id:
-                    config["org_id"] = org_id
-                save_config(config)
-
-                if data.get("existing"):
-                    success(f"Reconnected as {source_id}")
-                else:
-                    success(f"Registered as {source_id}")
-                click.echo()
-            else:
-                error_msg = response.json().get("error", "Registration failed")
-                error(f"Registration failed: {error_msg}")
-                sys.exit(1)
-
-        except requests.exceptions.RequestException as e:
-            error(f"Could not connect to {endpoint}: {e}")
-            sys.exit(1)
+            device_token, _ = _auto_register(api_key, endpoint, name)
         except Exception as e:
-            error(f"Registration error: {e}")
+            error(str(e))
             sys.exit(1)
     else:
         header("Plexus Agent")
@@ -279,72 +292,89 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
     label("Source", name or source_id)
     label("Endpoint", endpoint)
 
-    # Auto-detect sensors
+    # Auto-detect hardware
     sensor_hub = None
     if not no_sensors:
-        try:
-            from plexus.sensors import scan_sensors, auto_sensors
-            sensors = scan_sensors(bus)
-            if sensors:
-                sensor_hub = auto_sensors(bus=bus)
-                label("Sensors", f"{len(sensors)} detected")
-                for s in sensors:
-                    dim(f"             {Style.BULLET} {s.name}")
-            else:
-                label("Sensors", "None detected")
-        except ImportError:
-            dim("Sensors      Not available")
-        except Exception as e:
-            dim(f"Sensors      Error: {e}")
+        sensor_hub, sensors = detect_sensors(bus)
+        if sensors:
+            label("Sensors", f"{len(sensors)} detected")
+            for s in sensors:
+                dim(f"             {Style.BULLET} {s.name}")
+        else:
+            label("Sensors", "None detected")
 
-    # Auto-detect cameras
     camera_hub = None
     if not no_cameras:
-        try:
-            from plexus.cameras import scan_cameras, auto_cameras
-            cameras = scan_cameras()
-            if cameras:
-                camera_hub = auto_cameras()
-                label("Cameras", f"{len(cameras)} detected")
-                for c in cameras:
-                    dim(f"             {Style.BULLET} {c.name}")
-            else:
-                label("Cameras", "None detected")
-        except ImportError:
-            dim("Cameras      Not available")
-        except Exception as e:
-            dim(f"Cameras      Error: {e}")
-
-    # Auto-detect CAN interfaces
-    can_adapters = None
-    try:
-        from plexus.adapters.can_detect import scan_can
-        detected_can = scan_can()
-        up_can = [c for c in detected_can if c.is_up]
-        down_can = [c for c in detected_can if not c.is_up]
-
-        if up_can:
-            can_adapters = up_can
-            label("CAN", f"{len(up_can)} interface{'s' if len(up_can) != 1 else ''} active")
-            for c in up_can:
-                bitrate_str = f" ({c.bitrate} bps)" if c.bitrate else ""
-                dim(f"             {Style.BULLET} {c.channel}{bitrate_str}")
-        elif down_can:
-            label("CAN", f"{len(down_can)} found (not configured)")
-            for c in down_can:
-                dim(f"             {Style.BULLET} {c.channel} (down)")
-            click.secho(
-                f"             Run: plexus scan --setup",
-                fg=Style.INFO,
-            )
+        camera_hub, cameras = detect_cameras()
+        if cameras:
+            label("Cameras", f"{len(cameras)} detected")
+            for c in cameras:
+                dim(f"             {Style.BULLET} {c.name}")
         else:
-            label("CAN", "None detected")
-    except Exception as e:
-        dim(f"CAN          Error: {e}")
+            label("Cameras", "None detected")
+
+    can_adapters, up_can, down_can = detect_can()
+    if up_can:
+        label("CAN", f"{len(up_can)} interface{'s' if len(up_can) != 1 else ''} active")
+        for c in up_can:
+            bitrate_str = f" ({c.bitrate} bps)" if c.bitrate else ""
+            dim(f"             {Style.BULLET} {c.channel}{bitrate_str}")
+    elif down_can:
+        label("CAN", f"{len(down_can)} found (not configured)")
+        for c in down_can:
+            dim(f"             {Style.BULLET} {c.channel} (down)")
+        click.secho(
+            "             Run: plexus scan --setup",
+            fg=Style.INFO,
+        )
+    else:
+        label("CAN", "None detected")
+
+    # MQTT bridge
+    mqtt_adapter = None
+    if mqtt_broker:
+        try:
+            from plexus.adapters.mqtt import MQTTAdapter
+
+            parts = mqtt_broker.split(":")
+            broker_host = parts[0]
+            broker_port = int(parts[1]) if len(parts) > 1 else 1883
+
+            mqtt_adapter = MQTTAdapter(
+                broker=broker_host,
+                port=broker_port,
+                topic=mqtt_topic,
+            )
+            label("MQTT", f"{broker_host}:{broker_port} ({mqtt_topic})")
+        except ImportError:
+            warning("paho-mqtt not installed. Install with: pip install plexus-agent[mqtt]")
+        except Exception as e:
+            warning(f"MQTT setup failed: {e}")
 
     click.echo()
     divider()
     click.echo()
+
+    # Start MQTT bridge in background thread if configured
+    mqtt_thread = None
+    if mqtt_adapter:
+        px = Plexus(api_key=api_key, endpoint=endpoint)
+
+        def _mqtt_forwarder(metrics):
+            for m in metrics:
+                try:
+                    px.send(m.name, m.value, tags=m.tags or {})
+                except Exception:
+                    pass
+
+        mqtt_adapter.on_data = _mqtt_forwarder
+        try:
+            mqtt_adapter.connect()
+            mqtt_thread = threading.Thread(target=mqtt_adapter._run_loop, daemon=True)
+            mqtt_thread.start()
+            status_line(f"MQTT bridge active: {mqtt_broker}")
+        except Exception as e:
+            warning(f"MQTT connect failed: {e}")
 
     try:
         run_connector(
@@ -360,6 +390,9 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int):
         click.echo()
         status_line("Disconnected")
         click.echo()
+    finally:
+        if mqtt_adapter:
+            mqtt_adapter.disconnect()
 
 
 @main.command()
@@ -502,7 +535,7 @@ def pair(code: Optional[str]):
 
         # Display the code prominently
         click.echo()
-        click.secho(f"  Your code:  ", fg=Style.DIM, nl=False)
+        click.secho("  Your code:  ", fg=Style.DIM, nl=False)
         click.secho(user_code, fg=Style.INFO, bold=True)
         click.echo()
 
@@ -668,37 +701,28 @@ def scan(bus: int, show_all: bool, setup: bool):
         plexus scan --all              # Show all I2C addresses
         plexus scan --setup            # Auto-configure CAN interfaces
     """
+    from plexus.detect import detect_sensors, detect_cameras
+
     header("Device Scan")
 
     # Scan for cameras
     info("Cameras")
-    try:
-        from plexus.cameras import scan_cameras
-        detected_cameras = scan_cameras()
-        if detected_cameras:
-            for c in detected_cameras:
-                click.secho(f"    {Style.CHECK} {c.name}", fg=Style.SUCCESS)
-                dim(f"      {c.description}")
-        else:
-            dim("    None detected")
-    except ImportError:
-        dim("    Not available (install opencv-python)")
-    except Exception as e:
-        dim(f"    Error: {e}")
+    _, cameras = detect_cameras()
+    if cameras:
+        for c in cameras:
+            click.secho(f"    {Style.CHECK} {c.name}", fg=Style.SUCCESS)
+            dim(f"      {c.description}")
+    else:
+        dim("    None detected")
 
     click.echo()
 
     # Scan for sensors
     info("Sensors")
-    try:
-        from plexus.sensors import scan_sensors, scan_i2c, get_sensor_info
-    except ImportError:
-        dim("    Not available (install smbus2)")
-        click.echo()
-        return
 
     if show_all:
         try:
+            from plexus.sensors import scan_i2c
             addresses = scan_i2c(bus)
             if addresses:
                 dim(f"    I2C devices on bus {bus}:")
@@ -706,21 +730,20 @@ def scan(bus: int, show_all: bool, setup: bool):
                     info(f"      0x{addr:02X}")
             else:
                 dim(f"    No I2C devices on bus {bus}")
+        except ImportError:
+            dim("    Not available (install smbus2)")
         except Exception as e:
             dim(f"    Error: {e}")
         click.echo()
         return
 
-    try:
-        sensors = scan_sensors(bus)
-        if sensors:
-            for s in sensors:
-                click.secho(f"    {Style.CHECK} {s.name}", fg=Style.SUCCESS)
-                dim(f"      {s.description}")
-        else:
-            dim("    None detected")
-    except Exception as e:
-        dim(f"    Error: {e}")
+    _, sensors = detect_sensors(bus)
+    if sensors:
+        for s in sensors:
+            click.secho(f"    {Style.CHECK} {s.name}", fg=Style.SUCCESS)
+            dim(f"      {s.description}")
+    else:
+        dim("    None detected")
 
     click.echo()
 
@@ -751,37 +774,15 @@ def scan(bus: int, show_all: bool, setup: bool):
                         fg=Style.WARNING,
                     )
                     if c.interface == "socketcan":
-                        hint(f"      Run: plexus scan --setup")
+                        hint("      Run: plexus scan --setup")
                     elif c.interface == "slcan":
-                        dim(f"      Serial CAN adapter — configure with slcand")
+                        dim("      Serial CAN adapter — configure with slcand")
         else:
             dim("    None detected")
     except Exception as e:
         dim(f"    Error: {e}")
 
     click.echo()
-
-
-# Keep 'connect' as hidden alias for backwards compatibility
-@main.command(hidden=True)
-@click.option("--no-sensors", is_flag=True)
-@click.option("--bus", "-b", default=1, type=int)
-@click.pass_context
-def connect(ctx, no_sensors: bool, bus: int):
-    """Alias for 'run' (deprecated, use 'plexus run' instead)."""
-    warning("'plexus connect' is deprecated. Use 'plexus run' instead.")
-    click.echo()
-    ctx.invoke(run, no_sensors=no_sensors, bus=bus)
-
-
-# Keep 'login' as hidden alias for backwards compatibility
-@main.command(hidden=True)
-@click.pass_context
-def login(ctx):
-    """Alias for 'pair' (deprecated, use 'plexus pair' instead)."""
-    warning("'plexus login' is deprecated. Use 'plexus pair' instead.")
-    click.echo()
-    ctx.invoke(pair)
 
 
 if __name__ == "__main__":

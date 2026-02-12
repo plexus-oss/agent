@@ -17,10 +17,9 @@ Usage:
         px.send_batch([(m.name, m.value, m.timestamp) for m in metrics])
 """
 
-from plexus.importers.rosbag import RosbagImporter, RosbagSchema, TopicInfo
+from plexus.importers.rosbag import RosbagImporter, RosbagSchema
 
 __all__ = [
     "RosbagImporter",
     "RosbagSchema",
-    "TopicInfo",
 ]

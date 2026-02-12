@@ -4,10 +4,13 @@ Base camera class and utilities for Plexus camera drivers.
 All camera drivers inherit from BaseCamera and implement the capture() method.
 """
 
+import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Tuple, Callable
-import time
+from typing import Dict, List, Optional, Any, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -133,8 +136,6 @@ class CameraHub:
 
     def __init__(self):
         self.cameras: List[BaseCamera] = []
-        self._on_frame: Optional[Callable[[CameraFrame], None]] = None
-        self._on_error: Optional[Callable[[BaseCamera, Exception], None]] = None
 
     def add(self, camera: BaseCamera) -> "CameraHub":
         """Add a camera to the hub."""
@@ -152,9 +153,8 @@ class CameraHub:
             try:
                 camera.setup()
             except Exception as e:
+                logger.warning(f"Failed to setup {camera.name}: {e}")
                 camera._error = str(e)
-                if self._on_error:
-                    self._on_error(camera, e)
 
     def cleanup(self) -> None:
         """Clean up all cameras."""
@@ -174,8 +174,6 @@ class CameraHub:
                     frames.append(frame)
             except Exception as e:
                 camera._error = str(e)
-                if self._on_error:
-                    self._on_error(camera, e)
         return frames
 
     def get_camera(self, camera_id: str) -> Optional[BaseCamera]:
@@ -189,12 +187,3 @@ class CameraHub:
         """Get info about all cameras."""
         return [c.get_info() for c in self.cameras]
 
-    def on_frame(self, callback: Callable[[CameraFrame], None]) -> "CameraHub":
-        """Set callback for each frame."""
-        self._on_frame = callback
-        return self
-
-    def on_error(self, callback: Callable[[BaseCamera, Exception], None]) -> "CameraHub":
-        """Set callback for camera errors."""
-        self._on_error = callback
-        return self

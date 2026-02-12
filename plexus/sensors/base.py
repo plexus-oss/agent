@@ -4,10 +4,13 @@ Base sensor class and utilities for Plexus sensor drivers.
 All sensor drivers inherit from BaseSensor and implement the read() method.
 """
 
+import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Callable
-import time
+from typing import Dict, List, Optional, Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -136,8 +139,6 @@ class SensorHub:
     def __init__(self):
         self.sensors: List[BaseSensor] = []
         self._running = False
-        self._on_reading: Optional[Callable[[SensorReading], None]] = None
-        self._on_error: Optional[Callable[[BaseSensor, Exception], None]] = None
 
     def add(self, sensor: BaseSensor) -> "SensorHub":
         """Add a sensor to the hub."""
@@ -155,9 +156,8 @@ class SensorHub:
             try:
                 sensor.setup()
             except Exception as e:
+                logger.warning(f"Failed to setup {sensor.name}: {e}")
                 sensor._error = str(e)
-                if self._on_error:
-                    self._on_error(sensor, e)
 
     def cleanup(self) -> None:
         """Clean up all sensors."""
@@ -175,9 +175,8 @@ class SensorHub:
                 sensor_readings = sensor.read()
                 readings.extend(sensor_readings)
             except Exception as e:
+                logger.debug(f"Read error from {sensor.name}: {e}")
                 sensor._error = str(e)
-                if self._on_error:
-                    self._on_error(sensor, e)
         return readings
 
     def run(
@@ -235,9 +234,6 @@ class SensorHub:
                                         batch_timestamp = reading.timestamp
                                         batch_tags = tags if tags else None
 
-                                    if self._on_reading:
-                                        self._on_reading(reading)
-
                                 # Send all readings in one request
                                 if batch_points:
                                     client.send_batch(
@@ -250,8 +246,6 @@ class SensorHub:
 
                             except Exception as e:
                                 sensor._error = str(e)
-                                if self._on_error:
-                                    self._on_error(sensor, e)
 
                     # Sleep to maintain timing
                     elapsed = time.time() - loop_start
@@ -264,16 +258,6 @@ class SensorHub:
     def stop(self) -> None:
         """Stop the sensor hub."""
         self._running = False
-
-    def on_reading(self, callback: Callable[[SensorReading], None]) -> "SensorHub":
-        """Set callback for each reading."""
-        self._on_reading = callback
-        return self
-
-    def on_error(self, callback: Callable[[BaseSensor, Exception], None]) -> "SensorHub":
-        """Set callback for sensor errors."""
-        self._on_error = callback
-        return self
 
     def get_info(self) -> List[Dict[str, Any]]:
         """Get info about all sensors."""

@@ -12,7 +12,6 @@ from plexus.cameras.base import BaseCamera, CameraFrame
 # OpenCV is optional - only imported when USBCamera is used
 try:
     import cv2
-    import numpy as np
     OPENCV_AVAILABLE = True
 except ImportError:
     OPENCV_AVAILABLE = False
