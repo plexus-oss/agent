@@ -411,27 +411,32 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int, senso
 
 
 @main.command()
+@click.option("--key", "-k", help="API key from dashboard")
 @click.option("--code", "-c", help="Pairing code from dashboard (if you have one)")
-def pair(code: Optional[str]):
+def pair(key: Optional[str], code: Optional[str]):
     """
     Pair this device with your Plexus account.
 
-    Opens your browser to complete pairing, or enter a code from the dashboard.
+    Use an API key from the dashboard, or sign in directly.
     This is a one-time setup - after pairing, just run 'plexus run'.
 
-    Two ways to pair:
+    Three ways to pair:
 
-    1. From dashboard (recommended):
+    1. API key (recommended):
        - Go to app.plexus.company/fleet
-       - Click "Add Device"
+       - Click "Add Device" for an API key
+       - Run: plexus pair --key plx_xxx
+
+    2. Pairing code:
        - Run: plexus pair --code ABC123
 
-    2. Direct login:
+    3. Direct login:
        - Run: plexus pair
        - Opens browser to sign in
 
     Examples:
 
+        plexus pair --key plx_xxx      # Use API key from dashboard
         plexus pair                    # Opens browser to sign in
         plexus pair --code ABC123      # Use code from dashboard
     """
@@ -440,6 +445,20 @@ def pair(code: Optional[str]):
     base_endpoint = "https://app.plexus.company"
 
     header("Device Pairing")
+
+    if key:
+        # ─────────────────────────────────────────────────────────────────────
+        # API key pairing (recommended)
+        # ─────────────────────────────────────────────────────────────────────
+        config = load_config()
+        config["api_key"] = key
+        save_config(config)
+
+        success("API key saved")
+        click.echo()
+        hint("Start the agent with: plexus run")
+        click.echo()
+        return
 
     if code:
         # ─────────────────────────────────────────────────────────────────────
