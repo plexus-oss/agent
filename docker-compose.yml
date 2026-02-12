@@ -7,10 +7,10 @@
 # - Optional: MQTT broker for sensor bridges
 #
 # After starting, configure your agent:
-#   plexus login --endpoint http://localhost:3000
+#   PLEXUS_ENDPOINT=http://localhost:3000 plexus pair
 #
 # Or for local network access:
-#   plexus login --endpoint http://YOUR_IP:3000
+#   PLEXUS_ENDPOINT=http://YOUR_IP:3000 plexus pair
 
 services:
   # PostgreSQL database

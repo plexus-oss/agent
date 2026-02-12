@@ -146,7 +146,8 @@ class PlexusConnector:
             if auth_token:
                 self._http_session.headers["x-api-key"] = auth_token
             self._http_session.headers["Content-Type"] = "application/json"
-            self._http_session.headers["User-Agent"] = "plexus-agent/0.1.0"
+            from plexus import __version__
+            self._http_session.headers["User-Agent"] = f"plexus-agent/{__version__}"
         return self._http_session
 
     def _persist_points(self, points: List[Dict[str, Any]]) -> bool:

@@ -176,10 +176,21 @@ if [ -n "$PAIRING_CODE" ]; then
     echo "  Pairing with code: $PAIRING_CODE"
     echo ""
 
+    plexus pair --code "$PAIRING_CODE"
+
     if [ -n "$DEVICE_NAME" ]; then
-        plexus pair --code "$PAIRING_CODE"
-    else
-        plexus pair --code "$PAIRING_CODE"
+        # Write device name to config (used by plexus run)
+        CONFIG_FILE="$HOME/.plexus/config.json"
+        if [ -f "$CONFIG_FILE" ] && command -v python3 &> /dev/null; then
+            python3 -c "
+import json, pathlib
+p = pathlib.Path('$CONFIG_FILE')
+c = json.loads(p.read_text())
+c['source_name'] = '$DEVICE_NAME'
+p.write_text(json.dumps(c, indent=2))
+"
+            echo -e "  Device name set to: ${CYAN}$DEVICE_NAME${NC}"
+        fi
     fi
 else
     echo "  No pairing code provided."

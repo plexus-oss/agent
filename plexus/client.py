@@ -30,7 +30,7 @@ Usage:
             px.send("temperature", read_temp())
             time.sleep(0.01)
 
-Note: Requires login first. Run 'plexus login' to connect your account.
+Note: Requires authentication. Run 'plexus pair' or set PLEXUS_API_KEY.
 """
 
 import logging
@@ -126,7 +126,8 @@ class Plexus:
             if self.api_key:
                 self._session.headers["x-api-key"] = self.api_key
             self._session.headers["Content-Type"] = "application/json"
-            self._session.headers["User-Agent"] = "agent/0.1.0"
+            from plexus import __version__
+            self._session.headers["User-Agent"] = f"plexus-agent/{__version__}"
         return self._session
 
     @staticmethod
@@ -249,7 +250,7 @@ class Plexus:
         """
         if not self.api_key:
             raise AuthenticationError(
-                "No API key configured. Run 'plexus init' or set PLEXUS_API_KEY"
+                "No API key configured. Run 'plexus pair' or set PLEXUS_API_KEY"
             )
 
         # Include any previously buffered points

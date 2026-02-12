@@ -52,9 +52,13 @@ PLEXUS_ENDPOINT = "https://app.plexus.company"
 
 DEFAULT_CONFIG = {
     "api_key": None,
-    "device_token": None,  # New: device token from pairing
+    "device_token": None,
     "source_id": None,
     "org_id": None,
+    "source_name": None,
+    "endpoint": None,
+    "command_allowlist": None,
+    "command_denylist": None,
 }
 
 def get_config_path() -> Path:
@@ -153,7 +157,7 @@ def require_login() -> None:
     """Raise an error if not logged in."""
     if not is_logged_in():
         raise RuntimeError(
-            "Not logged in. Run 'plexus login' to connect your account."
+            "Not logged in. Run 'plexus pair' to connect your account."
         )
 
 
