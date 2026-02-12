@@ -118,9 +118,9 @@ def get_endpoint() -> str:
     if env_endpoint:
         return env_endpoint
 
-    # Check config file
+    # Check config file (use default if value is None/empty)
     config = load_config()
-    return config.get("endpoint", PLEXUS_ENDPOINT)
+    return config.get("endpoint") or PLEXUS_ENDPOINT
 
 
 def get_source_id() -> Optional[str]:

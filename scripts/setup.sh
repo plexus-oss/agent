@@ -253,7 +253,7 @@ echo ""
 if [ -n "$API_KEY" ]; then
     # API key flow — write config and skip pairing
     mkdir -p "$HOME/.plexus"
-    echo "{\"api_key\":\"$API_KEY\"}" > "$HOME/.plexus/config.json"
+    echo "{\"api_key\":\"$API_KEY\",\"endpoint\":\"https://app.plexus.company\"}" > "$HOME/.plexus/config.json"
     export PLEXUS_API_KEY="$API_KEY"
     echo -e "  ${GREEN}✓ API key configured${NC}"
     echo ""
