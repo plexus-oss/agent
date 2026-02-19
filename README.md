@@ -17,34 +17,53 @@ Works on any Linux system — edge compute nodes, test rigs, fleet vehicles, gro
 pip install plexus-agent
 ```
 
-With protocol support:
+With extras:
 
 ```bash
 pip install plexus-agent[sensors]    # I2C sensors (IMU, environmental)
 pip install plexus-agent[can]        # CAN bus with DBC decoding
 pip install plexus-agent[mqtt]       # MQTT bridge
 pip install plexus-agent[camera]     # USB cameras (OpenCV)
+pip install plexus-agent[serial]     # Serial/UART devices
 pip install plexus-agent[ros]        # ROS1/ROS2 bag import
+pip install plexus-agent[tui]        # Live terminal dashboard
+pip install plexus-agent[system]     # System health (psutil)
 pip install plexus-agent[all]        # Everything
 ```
 
 ## Quick Start
 
-The fastest way to get started — one command, handles everything:
+One command from install to streaming:
 
 ```bash
-curl -sL https://app.plexus.company/setup | bash -s -- --key plx_your_api_key
+pip install plexus-agent && plexus start --key plx_xxxxx
 ```
 
-This installs Python (if needed), installs the agent, configures your API key, and sets up auto-start. Get an API key from [app.plexus.company](https://app.plexus.company) → Settings → Developer.
+`plexus start` handles auth, hardware detection, dependency installation, and sensor selection interactively:
 
-### Option 1: Managed Device (recommended)
+```
+Found 3 sensors on I2C bus 1:
 
-Pair your device with the dashboard and control streaming, recording, and configuration from the web UI.
+  [1] ✓ BME280       temperature, humidity, pressure
+  [2] ✓ MPU6050      accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z
+  [3] ✓ INA219       bus_voltage, current_ma, power_mw
+
+Stream all? [Y/n] or enter numbers to select (e.g., 1,3):
+```
+
+Get an API key from [app.plexus.company](https://app.plexus.company) → Fleet → Add Device.
+
+### Option 1: One-liner (recommended)
 
 ```bash
-# 1. Pair (one-time) — get the code from app.plexus.company/fleet
-plexus pair --code ABC123
+plexus start --key plx_xxxxx
+```
+
+### Option 2: Step by step
+
+```bash
+# 1. Pair (one-time) — get your API key from app.plexus.company/fleet
+plexus pair --key plx_xxxxx
 
 # 2. Run the agent
 plexus run
@@ -99,29 +118,138 @@ See [API.md](API.md) for curl, JavaScript, Go, and Bash examples.
 
 ## Authentication
 
-| Credential   | Prefix  | How to get it                              | Used by                     |
-|-------------|---------|--------------------------------------------|-----------------------------|
-| Device token | `plxd_` | `plexus pair` (automatic)                  | `plexus run` (WebSocket)    |
-| API key      | `plx_`  | Dashboard → Settings → Developer          | `Plexus()` client (HTTP)    |
+| Method            | How to get it                                           | Used by                            |
+| ----------------- | ------------------------------------------------------- | ---------------------------------- |
+| API key (`plx_*`) | Dashboard → Fleet → Add Device, or Settings → Developer | `plexus run` and `Plexus()` client |
+
+Two ways to pair:
+
+1. **API key (recommended):** `plexus pair --key plx_xxxxx`
+2. **Browser login:** `plexus pair` (opens browser for OAuth device flow)
 
 Credentials are stored in `~/.plexus/config.json` or can be set via environment variables:
 
 ```bash
 export PLEXUS_API_KEY=plx_xxxxx
-export PLEXUS_DEVICE_TOKEN=plxd_xxxxx
 export PLEXUS_ENDPOINT=https://app.plexus.company  # default
 ```
 
 ## CLI Reference
 
 ```
-plexus pair [--code CODE]    Pair device with your account
-plexus run  [OPTIONS]        Start the agent
-plexus scan [--setup]        Detect connected hardware
-plexus status                Check connection and config
+plexus start [--key KEY] [--bus N] [--name NAME]      Set up and stream (interactive)
+plexus add   [CAPABILITY...]                           Install capabilities (sensors, can, mqtt, ...)
+plexus run   [--live] [--auto-install] [OPTIONS]       Start the agent
+plexus pair  [--key KEY]                               Pair device with your account
+plexus scan  [--all] [--setup] [--json]                Detect connected hardware
+plexus status                                          Check connection and config
+plexus doctor                                          Diagnose issues
+```
+
+### plexus start
+
+Set up and start streaming in one command. Handles auth, hardware detection, dependency installation, and sensor selection interactively.
+
+```bash
+plexus start                         # Interactive setup
+plexus start --key plx_xxx           # Non-interactive auth
+plexus start --key plx_xxx -b 0      # Specify I2C bus
+plexus start --name "robot-01"       # Name the device
+```
+
+| Flag         | Description                              |
+| ------------ | ---------------------------------------- |
+| `-k, --key`  | API key (skips interactive auth prompt)  |
+| `-n, --name` | Device name for fleet identification     |
+| `-b, --bus`  | I2C bus number (default: 1)              |
+
+### plexus add
+
+Install capabilities — like `shadcn add` for hardware. Without arguments, shows an interactive picker with install status.
+
+```bash
+plexus add                           # Interactive picker
+plexus add can                       # Add CAN bus support
+plexus add sensors camera            # Add multiple
+```
+
+Available capabilities: `sensors`, `camera`, `mqtt`, `can`, `serial`, `system`, `tui`, `ros`.
+
+### plexus run
+
+Start the agent. Connects to Plexus and streams telemetry controlled from the dashboard.
+
+```bash
+plexus run                              # Start with auto-detected hardware
+plexus run --live                       # Live terminal dashboard (like htop)
+plexus run --sensor system              # Stream CPU, memory, disk, thermals
+plexus run --auto-install               # Auto-install missing dependencies
+plexus run --mqtt localhost:1883        # Bridge MQTT data
+plexus run --no-sensors --no-cameras    # Skip hardware auto-detection
+```
+
+| Flag             | Description                                         |
+| ---------------- | --------------------------------------------------- |
+| `-n, --name`     | Device name for fleet identification                |
+| `--live`         | Show live terminal dashboard with real-time metrics |
+| `--auto-install` | Auto-install missing Python dependencies on demand  |
+| `--no-sensors`   | Disable I2C sensor auto-detection                   |
+| `--no-cameras`   | Disable camera auto-detection                       |
+| `-b, --bus`      | I2C bus number (default: 1)                         |
+| `-s, --sensor`   | Sensor type to use (e.g. `system`). Repeatable.     |
+| `--mqtt`         | MQTT broker to bridge (e.g. `localhost:1883`)       |
+| `--mqtt-topic`   | MQTT topic to subscribe to (default: `sensors/#`)   |
+
+### plexus scan
+
+Detect all connected hardware — I2C sensors, cameras, serial ports, USB devices, network interfaces, GPIO, Bluetooth, and system info.
+
+```bash
+plexus scan                # Full hardware scan
+plexus scan --all          # Show all I2C addresses (including unknown)
+plexus scan --setup        # Auto-configure CAN interfaces
+plexus scan --json         # Machine-readable JSON output
+```
+
+### plexus doctor
+
+Diagnose connectivity, configuration, and dependency issues. Checks config files, network reachability, authentication, installed dependencies, and hardware permissions.
+
+```bash
+plexus doctor              # Run all diagnostics
 ```
 
 Run `plexus <command> --help` for full options.
+
+## Commands & Remote Control
+
+Declare typed commands on your device. The dashboard auto-generates UI controls — sliders, dropdowns, toggles — from the schema.
+
+```python
+from plexus import Plexus, param
+
+px = Plexus()
+
+@px.command("set_speed", description="Set motor speed")
+@param("rpm", type="float", min=0, max=10000, unit="rpm")
+@param("ramp_time", type="float", min=0.1, max=10.0, default=1.0, unit="s")
+async def set_speed(rpm, ramp_time):
+    motor.set_rpm(rpm, ramp=ramp_time)
+    return {"actual_rpm": motor.read_rpm()}
+
+@px.command("set_mode", description="Switch operating mode")
+@param("mode", type="enum", choices=["idle", "run", "calibrate"])
+async def set_mode(mode):
+    controller.set_mode(mode)
+```
+
+Commands are sent to the device over WebSocket and executed in real time. The dashboard shows:
+
+- Parameter inputs with validation (min/max, type checking, required fields)
+- Execution status and results
+- Command history
+
+This works the same way in the C SDK — see the [C SDK README](../c-sdk/README.md#typed-commands) for the equivalent API.
 
 ## Sessions
 
@@ -160,12 +288,12 @@ hub.run(Plexus())
 
 Built-in sensor drivers:
 
-| Sensor  | Type                | Metrics                                          | Interface   |
-|---------|---------------------|--------------------------------------------------|-------------|
-| MPU6050 | 6-axis IMU          | accel_x/y/z, gyro_x/y/z                         | I2C (0x68)  |
-| MPU9250 | 9-axis IMU          | accel_x/y/z, gyro_x/y/z                         | I2C (0x68)  |
-| BME280  | Environmental       | temperature, humidity, pressure                   | I2C (0x76)  |
-| System  | System health       | cpu.temperature, memory.used_pct, disk.used_pct, cpu.load | None  |
+| Sensor  | Type          | Metrics                                                   | Interface  |
+| ------- | ------------- | --------------------------------------------------------- | ---------- |
+| MPU6050 | 6-axis IMU    | accel_x/y/z, gyro_x/y/z                                   | I2C (0x68) |
+| MPU9250 | 9-axis IMU    | accel_x/y/z, gyro_x/y/z                                   | I2C (0x68) |
+| BME280  | Environmental | temperature, humidity, pressure                           | I2C (0x76) |
+| System  | System health | cpu.temperature, memory.used_pct, disk.used_pct, cpu.load | None       |
 
 ### Custom Sensors
 
@@ -246,6 +374,26 @@ px = Plexus(persistent_buffer=True)
 print(px.buffer_size())
 px.flush_buffer()
 ```
+
+## Live Terminal Dashboard
+
+Run `plexus run --live` to get a real-time terminal UI — like htop for your hardware:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ Plexus Live Dashboard     ● online     ↑ 4m 32s             │
+├──────────────┬──────────┬────────┬────────┬─────────────────┤
+│ Metric       │ Value    │ Rate   │ Buffer │ Status          │
+├──────────────┼──────────┼────────┼────────┼─────────────────┤
+│ cpu.temp     │ 62.3     │ 1.0 Hz │ 0      │ ● streaming    │
+│ engine.rpm   │ 3,450    │ 10 Hz  │ 0      │ ● streaming    │
+│ pressure     │ 1013.2   │ 1.0 Hz │ 0      │ ● streaming    │
+└──────────────┴──────────┴────────┴────────┴─────────────────┘
+│ Throughput: 12 pts/min   Total: 847   Errors: 0             │
+└──────────────────────────────────────────────────────────────┘
+```
+
+Requires the `tui` extra: `pip install plexus-agent[tui]`
 
 ## Architecture
 

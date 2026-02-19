@@ -18,8 +18,8 @@ User Controls (from Dashboard UI):
 - "Record"    → store=True  → WebSocket + HTTP (uses storage quota)
 
 Authentication:
-- Device token (plxd_*) from pairing works for both WebSocket and HTTP
-- API key (plx_*) also works if user prefers
+- API key (plx_*) is the primary auth method
+- Device token (plxd_*) supported as fallback for existing paired devices
 """
 
 import asyncio
@@ -27,15 +27,17 @@ import json
 import logging
 import os
 import platform
+import random
 import time
 from typing import Optional, Callable, List, Dict, Any, TYPE_CHECKING
 
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-from plexus.config import get_api_key, get_device_token, get_endpoint, get_source_id, get_org_id, get_command_allowlist, get_command_denylist
+from plexus.config import get_api_key, get_endpoint, get_source_id, get_org_id, get_command_allowlist, get_command_denylist
 from plexus.commands import CommandExecutor, DEFAULT_COMMAND_DENYLIST
 from plexus.streaming import StreamManager
+from plexus.typed_commands import CommandRegistry
 
 if TYPE_CHECKING:
     from plexus.sensors.base import SensorHub
@@ -69,10 +71,11 @@ class PlexusConnector:
         can_adapters: Optional[List["DetectedCAN"]] = None,
         command_allowlist: Optional[List[str]] = None,
         command_denylist: Optional[List[str]] = None,
+        command_registry: Optional[CommandRegistry] = None,
     ):
-        # Device token is preferred (from pairing flow)
-        self.device_token = device_token or get_device_token()
+        # API key is preferred; device_token kept as fallback for existing paired devices
         self.api_key = api_key or get_api_key()
+        self.device_token = device_token
         self.endpoint = (endpoint or get_endpoint()).rstrip("/")
         self.source_id = source_id or get_source_id()
         self.org_id = org_id or get_org_id() or "default"
@@ -85,6 +88,9 @@ class PlexusConnector:
         self._running = False
         self._authenticated = False
         self._http_session: Optional[Any] = None
+
+        # Typed command registry
+        self._typed_commands = command_registry or CommandRegistry()
 
         # Delegates
         allowlist = command_allowlist or get_command_allowlist()
@@ -187,7 +193,12 @@ class PlexusConnector:
     # =========================================================================
 
     async def connect(self):
-        """Connect to Plexus and listen for commands."""
+        """Connect to Plexus and listen for commands.
+
+        Uses exponential backoff with jitter on reconnection:
+        1s → 2s → 4s → 8s → ... → 60s max, with ±25% jitter.
+        Backoff resets after a successful connection that lasts >30s.
+        """
         if not self.device_token and not self.api_key:
             raise ValueError("No credentials. Run 'plexus pair' first.")
 
@@ -195,12 +206,18 @@ class PlexusConnector:
         self.on_status(f"Connecting to {ws_url}...")
 
         self._running = True
+        backoff = 1.0
+        max_backoff = 60.0
 
         while self._running:
+            connected_at = time.monotonic()
             try:
                 async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
                     self._ws = ws
                     self._authenticated = False
+
+                    # Reset backoff after stable connection (>30s)
+                    backoff = 1.0
 
                     # Build auth message
                     auth_msg = {
@@ -213,11 +230,12 @@ class PlexusConnector:
                             {"interface": c.interface, "channel": c.channel, "bitrate": c.bitrate}
                             for c in self.can_adapters
                         ] if self.can_adapters else [],
+                        "commands": self._typed_commands.get_schemas(),
                     }
-                    if self.device_token:
-                        auth_msg["device_token"] = self.device_token
-                    elif self.api_key:
+                    if self.api_key:
                         auth_msg["api_key"] = self.api_key
+                    elif self.device_token:
+                        auth_msg["device_token"] = self.device_token
 
                     await ws.send(json.dumps(auth_msg))
                     self.on_status("Authenticating...")
@@ -227,14 +245,20 @@ class PlexusConnector:
 
             except ConnectionClosed as e:
                 self.on_status(f"Disconnected: {e.reason}")
-                if self._running:
-                    self.on_status("Reconnecting in 5s...")
-                    await asyncio.sleep(5)
             except Exception as e:
                 self.on_status(f"Error: {e}")
-                if self._running:
-                    self.on_status("Reconnecting in 5s...")
-                    await asyncio.sleep(5)
+
+            if self._running:
+                # Don't escalate backoff if connection was stable (>30s)
+                if time.monotonic() - connected_at < 30:
+                    backoff = min(backoff * 2, max_backoff)
+                else:
+                    backoff = 1.0
+                # Add ±25% jitter to prevent thundering herd
+                jitter = backoff * random.uniform(0.75, 1.25)
+                delay = min(jitter, max_backoff)
+                self.on_status(f"Reconnecting in {delay:.1f}s...")
+                await asyncio.sleep(delay)
 
     async def _handle_message(self, message: str):
         """Handle incoming WebSocket message."""
@@ -263,6 +287,9 @@ class PlexusConnector:
                 "start_can": lambda d: self._streams.start_can_stream(d, self._ws),
                 "stop_can": lambda d: self._streams.stop_can_stream(d),
                 "execute": lambda d: self._commands.execute(d, self._ws, lambda: self._running),
+                "typed_command": lambda d: self._typed_commands.execute(
+                    d.get("command", ""), d.get("params", {}), self._ws, d.get("id", "cmd")
+                ),
                 "cancel": lambda _: self._commands.cancel(),
                 "configure": lambda d: self._streams.configure_sensor(d),
                 "configure_camera": lambda d: self._streams.configure_camera(d),
@@ -304,6 +331,7 @@ def run_connector(
     can_adapters: Optional[List["DetectedCAN"]] = None,
     command_allowlist: Optional[List[str]] = None,
     command_denylist: Optional[List[str]] = None,
+    command_registry: Optional[CommandRegistry] = None,
 ):
     """Run the connector (blocking). Handles SIGTERM for graceful shutdown."""
     import signal
@@ -318,6 +346,7 @@ def run_connector(
         can_adapters=can_adapters,
         command_allowlist=command_allowlist,
         command_denylist=command_denylist,
+        command_registry=command_registry,
     )
 
     def _handle_sigterm(signum, frame):

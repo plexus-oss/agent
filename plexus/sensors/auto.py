@@ -54,6 +54,12 @@ def _init_known_sensors():
     # Import drivers
     from .mpu6050 import MPU6050, MPU9250
     from .bme280 import BME280
+    from .ina219 import INA219
+    from .sht3x import SHT3x
+    from .bh1750 import BH1750
+    from .vl53l0x import VL53L0X
+    from .ads1115 import ADS1115
+    from .magnetometer import QMC5883L, HMC5883L
 
     # Register known sensors: (driver_class, i2c_address, chip_id_check)
     KNOWN_SENSORS = [
@@ -64,6 +70,27 @@ def _init_known_sensors():
         # Environmental sensors
         (BME280, 0x76, None),
         (BME280, 0x77, None),
+        # Current/power monitoring
+        (INA219, 0x40, None),
+        (INA219, 0x41, None),
+        (INA219, 0x44, None),
+        (INA219, 0x45, None),
+        # Precision temperature/humidity
+        (SHT3x, 0x44, None),
+        (SHT3x, 0x45, None),
+        # Ambient light
+        (BH1750, 0x23, None),
+        (BH1750, 0x5C, None),
+        # Time-of-flight distance
+        (VL53L0X, 0x29, None),
+        # ADC
+        (ADS1115, 0x48, None),
+        (ADS1115, 0x49, None),
+        (ADS1115, 0x4A, None),
+        (ADS1115, 0x4B, None),
+        # Magnetometers
+        (QMC5883L, 0x0D, None),
+        (HMC5883L, 0x1E, None),
     ]
 
 

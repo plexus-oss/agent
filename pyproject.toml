@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "plexus-agent"
-version = "0.4.2"
+version = "0.5.0"
 description = "Send sensor data to Plexus in one line of code"
 readme = "README.md"
 license = "Apache-2.0"
@@ -53,6 +53,15 @@ can = [
     "python-can>=4.0.0",         # CAN bus interface
     "cantools>=39.0.0",          # DBC file parsing
 ]
+serial = [
+    "pyserial>=3.5",             # Serial port communication
+]
+tui = [
+    "rich>=13.0.0",              # Rich terminal output and live dashboard
+]
+system = [
+    "psutil>=5.9.0",             # System resource monitoring
+]
 all = [
     "paho-mqtt>=1.6.0",
     "rosbags>=0.9.0",
@@ -62,6 +71,9 @@ all = [
     "smbus2>=0.4.0",
     "python-can>=4.0.0",
     "cantools>=39.0.0",
+    "pyserial>=3.5",
+    "rich>=13.0.0",
+    "psutil>=5.9.0",
 ]
 dev = ["pytest", "pytest-cov", "ruff"]
 
