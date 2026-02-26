@@ -170,7 +170,6 @@ class Plexus:
             "metric": metric,
             "value": value,
             "timestamp": self._normalize_ts_ms(timestamp),
-            "source_id": self.source_id,
         }
         if tags:
             point["tags"] = tags
@@ -267,7 +266,7 @@ class Plexus:
             try:
                 response = self._get_session().post(
                     url,
-                    json={"points": all_points},
+                    json={"source_id": self.source_id, "points": all_points},
                     timeout=self.timeout,
                 )
 

@@ -32,7 +32,7 @@ def test_make_point():
     assert point["metric"] == "temperature"
     assert point["value"] == 72.5
     assert "timestamp" in point
-    assert "source_id" in point
+    assert "source_id" not in point
 
 
 def test_make_point_with_tags():

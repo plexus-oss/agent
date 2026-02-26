@@ -418,8 +418,10 @@ def start(key: Optional[str], name: Optional[str], bus: int):
 EXTRAS = [
     ("sensors", "I2C sensors (IMU, environmental, current)", "smbus2"),
     ("camera", "USB webcam support (OpenCV)", "cv2"),
+    ("picamera", "Raspberry Pi Camera Module", "picamera2"),
     ("mqtt", "MQTT broker bridging", "paho"),
     ("can", "CAN bus with DBC signal decoding", "can"),
+    ("mavlink", "MAVLink for drones/UAVs", "pymavlink"),
     ("serial", "Serial/UART communication", "serial"),
     ("system", "System health monitoring (psutil)", "psutil"),
     ("tui", "Live terminal dashboard", "rich"),

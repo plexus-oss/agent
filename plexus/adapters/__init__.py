@@ -7,9 +7,10 @@ Plexus to ingest data from any protocol without modifying core code.
 Built-in adapters:
     - MQTTAdapter: Bridge MQTT brokers to Plexus
     - CANAdapter: CAN bus with DBC signal decoding
+    - MAVLinkAdapter: MAVLink for drones and autonomous vehicles
 
 Usage:
-    from plexus.adapters import MQTTAdapter, CANAdapter, AdapterRegistry
+    from plexus.adapters import MQTTAdapter, CANAdapter, MAVLinkAdapter, AdapterRegistry
 
     # Use built-in adapter
     adapter = MQTTAdapter(broker="localhost", topic="sensors/#")
@@ -18,6 +19,12 @@ Usage:
 
     # CAN bus adapter
     adapter = CANAdapter(interface="socketcan", channel="can0", dbc_path="vehicle.dbc")
+    with adapter:
+        for metric in adapter.poll():
+            print(f"{metric.name}: {metric.value}")
+
+    # MAVLink adapter
+    adapter = MAVLinkAdapter(connection_string="udpin:0.0.0.0:14550")
     with adapter:
         for metric in adapter.poll():
             print(f"{metric.name}: {metric.value}")
@@ -56,6 +63,14 @@ except ImportError:
     CANAdapter = None  # type: ignore
     _HAS_CAN = False
 
+# Import MAVLinkAdapter (requires optional [mavlink] extra)
+try:
+    from plexus.adapters.mavlink import MAVLinkAdapter
+    _HAS_MAVLINK = True
+except ImportError:
+    MAVLinkAdapter = None  # type: ignore
+    _HAS_MAVLINK = False
+
 __all__ = [
     "ProtocolAdapter",
     "Metric",
@@ -65,4 +80,5 @@ __all__ = [
     "AdapterRegistry",
     "MQTTAdapter",
     "CANAdapter",
+    "MAVLinkAdapter",
 ]

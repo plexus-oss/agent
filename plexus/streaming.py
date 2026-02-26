@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from plexus.sensors.base import SensorHub
     from plexus.cameras.base import CameraHub
     from plexus.adapters.can_detect import DetectedCAN
+    from plexus.adapters.mavlink_detect import DetectedMAVLink
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +36,14 @@ class StreamManager:
         sensor_hub: Optional["SensorHub"] = None,
         camera_hub: Optional["CameraHub"] = None,
         can_adapters: Optional[List["DetectedCAN"]] = None,
+        mavlink_connections: Optional[List["DetectedMAVLink"]] = None,
         on_status: Optional[Callable[[str], None]] = None,
         persist_fn: Optional[Callable[[List[Dict[str, Any]]], Any]] = None,
     ):
         self.sensor_hub = sensor_hub
         self.camera_hub = camera_hub
         self.can_adapters = can_adapters or []
+        self.mavlink_connections = mavlink_connections or []
         self.on_status = on_status or (lambda x: None)
         self.persist_fn = persist_fn
 
@@ -48,6 +51,8 @@ class StreamManager:
         self._active_camera_streams: dict[str, asyncio.Task] = {}
         self._active_can_streams: dict[str, asyncio.Task] = {}
         self._can_instances: dict[str, Any] = {}  # channel -> CANAdapter
+        self._active_mavlink_streams: dict[str, asyncio.Task] = {}
+        self._mavlink_instances: dict[str, Any] = {}  # conn_string -> MAVLinkAdapter
         self._recording: bool = False
 
     # =========================================================================
@@ -372,6 +377,117 @@ class StreamManager:
                 logger.debug(f"CAN disconnect error on {channel}: {e}")
 
     # =========================================================================
+    # MAVLink Streaming
+    # =========================================================================
+
+    async def start_mavlink_stream(self, data: dict, ws):
+        """Start streaming MAVLink telemetry.
+
+        Args (from dashboard):
+            connection_string: MAVLink connection (e.g. "udpin:0.0.0.0:14550"). Required.
+            interval_ms: Poll interval in ms (default 10).
+            include_messages: Optional list of message types to include.
+            store: Whether to persist to ClickHouse.
+        """
+        conn_str = data.get("connection_string")
+        if not conn_str:
+            self.on_status("No MAVLink connection string specified")
+            return
+
+        # Stop existing stream for this connection
+        if conn_str in self._active_mavlink_streams:
+            self._active_mavlink_streams[conn_str].cancel()
+            try:
+                await self._active_mavlink_streams[conn_str]
+            except (asyncio.CancelledError, Exception):
+                pass
+            del self._active_mavlink_streams[conn_str]
+            self._cleanup_mavlink_instance(conn_str)
+
+        interval_ms = data.get("interval_ms", 10)
+        store = data.get("store", False)
+        include_messages = data.get("include_messages")
+
+        if store:
+            self._recording = True
+
+        try:
+            from plexus.adapters.mavlink import MAVLinkAdapter
+
+            adapter = MAVLinkAdapter(
+                connection_string=conn_str,
+                include_messages=include_messages,
+            )
+            adapter.connect()
+            self._mavlink_instances[conn_str] = adapter
+        except ImportError:
+            self.on_status("pymavlink not installed. Install with: pip install plexus-agent[mavlink]")
+            return
+        except Exception as e:
+            self.on_status(f"MAVLink connect failed: {e}")
+            return
+
+        self.on_status(f"MAVLink {conn_str} streaming @ {interval_ms}ms")
+
+        async def mavlink_loop():
+            loop = asyncio.get_event_loop()
+            try:
+                while conn_str in self._active_mavlink_streams:
+                    metrics = await loop.run_in_executor(None, adapter.poll)
+
+                    if metrics:
+                        points = [
+                            {
+                                "metric": m.name,
+                                "value": m.value,
+                                "timestamp": int((m.timestamp or time.time()) * 1000),
+                                "tags": m.tags or {},
+                            }
+                            for m in metrics
+                        ]
+                        await ws.send(json.dumps({"type": "telemetry", "points": points}))
+
+                        if self._recording and self.persist_fn:
+                            asyncio.create_task(self.persist_fn(points))
+
+                    await asyncio.sleep(interval_ms / 1000)
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.debug(f"MAVLink stream error on {conn_str}: {e}")
+                self.on_status(f"MAVLink stream error: {e}")
+            finally:
+                self._cleanup_mavlink_instance(conn_str)
+
+        self._active_mavlink_streams[conn_str] = asyncio.create_task(mavlink_loop())
+
+    async def stop_mavlink_stream(self, data: dict):
+        """Stop MAVLink streaming."""
+        conn_str = data.get("connection_string")
+
+        if conn_str == "*":
+            for task in self._active_mavlink_streams.values():
+                task.cancel()
+            self._active_mavlink_streams.clear()
+            for cs in list(self._mavlink_instances):
+                self._cleanup_mavlink_instance(cs)
+            self.on_status("Stopped all MAVLink streams")
+        elif conn_str in self._active_mavlink_streams:
+            self._active_mavlink_streams[conn_str].cancel()
+            del self._active_mavlink_streams[conn_str]
+            self._cleanup_mavlink_instance(conn_str)
+            self.on_status(f"Stopped MAVLink stream: {conn_str}")
+
+    def _cleanup_mavlink_instance(self, conn_str: str):
+        """Disconnect and remove a MAVLink adapter instance."""
+        adapter = self._mavlink_instances.pop(conn_str, None)
+        if adapter:
+            try:
+                adapter.disconnect()
+            except Exception as e:
+                logger.debug(f"MAVLink disconnect error on {conn_str}: {e}")
+
+    # =========================================================================
     # Cleanup
     # =========================================================================
 
@@ -393,3 +509,10 @@ class StreamManager:
 
         for ch in list(self._can_instances):
             self._cleanup_can_instance(ch)
+
+        for task in self._active_mavlink_streams.values():
+            task.cancel()
+        self._active_mavlink_streams.clear()
+
+        for cs in list(self._mavlink_instances):
+            self._cleanup_mavlink_instance(cs)

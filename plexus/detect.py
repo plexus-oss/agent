@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from plexus.sensors.base import SensorHub
     from plexus.cameras.base import CameraHub
     from plexus.adapters.can_detect import DetectedCAN
+    from plexus.adapters.mavlink_detect import DetectedMAVLink
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -157,6 +158,20 @@ def detect_can() -> tuple[Optional[list["DetectedCAN"]], list["DetectedCAN"], li
     except Exception as e:
         logger.debug(f"CAN detection failed: {e}")
         return None, [], []
+
+
+def detect_mavlink() -> list["DetectedMAVLink"]:
+    """Detect MAVLink connections (UDP, TCP, serial).
+
+    Returns:
+        List of detected MAVLink connections.
+    """
+    try:
+        from plexus.adapters.mavlink_detect import scan_mavlink
+        return scan_mavlink()
+    except Exception as e:
+        logger.debug(f"MAVLink detection failed: {e}")
+        return []
 
 
 def detect_named_sensors(
@@ -1076,6 +1091,9 @@ def detect_all(bus: int = 1) -> Dict[str, Any]:
     # CAN
     _, can_up, can_down = detect_can()
 
+    # MAVLink
+    mavlink_connections = detect_mavlink()
+
     return {
         "system": asdict(sys_info),
         "sensors": [
@@ -1127,4 +1145,13 @@ def detect_all(bus: int = 1) -> Dict[str, Any]:
                 for c in can_down
             ],
         },
+        "mavlink": [
+            {
+                "connection_string": m.connection_string,
+                "transport": m.transport,
+                "description": m.description,
+                "is_available": m.is_available,
+            }
+            for m in mavlink_connections
+        ],
     }

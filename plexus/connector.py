@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from plexus.sensors.base import SensorHub
     from plexus.cameras.base import CameraHub
     from plexus.adapters.can_detect import DetectedCAN
+    from plexus.adapters.mavlink_detect import DetectedMAVLink
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class PlexusConnector:
         sensor_hub: Optional["SensorHub"] = None,
         camera_hub: Optional["CameraHub"] = None,
         can_adapters: Optional[List["DetectedCAN"]] = None,
+        mavlink_connections: Optional[List["DetectedMAVLink"]] = None,
         command_allowlist: Optional[List[str]] = None,
         command_denylist: Optional[List[str]] = None,
         command_registry: Optional[CommandRegistry] = None,
@@ -83,6 +85,7 @@ class PlexusConnector:
         self.sensor_hub = sensor_hub
         self.camera_hub = camera_hub
         self.can_adapters = can_adapters
+        self.mavlink_connections = mavlink_connections
 
         self._ws = None
         self._running = False
@@ -105,6 +108,7 @@ class PlexusConnector:
             sensor_hub=sensor_hub,
             camera_hub=camera_hub,
             can_adapters=can_adapters,
+            mavlink_connections=mavlink_connections,
             on_status=self.on_status,
             persist_fn=self._persist_async,
         )
@@ -230,6 +234,10 @@ class PlexusConnector:
                             {"interface": c.interface, "channel": c.channel, "bitrate": c.bitrate}
                             for c in self.can_adapters
                         ] if self.can_adapters else [],
+                        "mavlink": [
+                            {"connection_string": m.connection_string, "transport": m.transport}
+                            for m in self.mavlink_connections
+                        ] if self.mavlink_connections else [],
                         "commands": self._typed_commands.get_schemas(),
                     }
                     if self.api_key:
@@ -286,6 +294,8 @@ class PlexusConnector:
                 "stop_camera": lambda d: self._streams.stop_camera(d),
                 "start_can": lambda d: self._streams.start_can_stream(d, self._ws),
                 "stop_can": lambda d: self._streams.stop_can_stream(d),
+                "start_mavlink": lambda d: self._streams.start_mavlink_stream(d, self._ws),
+                "stop_mavlink": lambda d: self._streams.stop_mavlink_stream(d),
                 "execute": lambda d: self._commands.execute(d, self._ws, lambda: self._running),
                 "typed_command": lambda d: self._typed_commands.execute(
                     d.get("command", ""), d.get("params", {}), self._ws, d.get("id", "cmd")
@@ -329,6 +339,7 @@ def run_connector(
     sensor_hub: Optional["SensorHub"] = None,
     camera_hub: Optional["CameraHub"] = None,
     can_adapters: Optional[List["DetectedCAN"]] = None,
+    mavlink_connections: Optional[List["DetectedMAVLink"]] = None,
     command_allowlist: Optional[List[str]] = None,
     command_denylist: Optional[List[str]] = None,
     command_registry: Optional[CommandRegistry] = None,
@@ -344,6 +355,7 @@ def run_connector(
         sensor_hub=sensor_hub,
         camera_hub=camera_hub,
         can_adapters=can_adapters,
+        mavlink_connections=mavlink_connections,
         command_allowlist=command_allowlist,
         command_denylist=command_denylist,
         command_registry=command_registry,

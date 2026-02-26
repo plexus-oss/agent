@@ -22,9 +22,11 @@ With extras:
 ```bash
 pip install plexus-agent[sensors]    # I2C sensors (IMU, environmental)
 pip install plexus-agent[can]        # CAN bus with DBC decoding
+pip install plexus-agent[mavlink]    # MAVLink for drones/UAVs
 pip install plexus-agent[mqtt]       # MQTT bridge
 pip install plexus-agent[camera]     # USB cameras (OpenCV)
-pip install plexus-agent[serial]     # Serial/UART devices
+pip install plexus-agent[picamera]   # Raspberry Pi Camera Module
+pip install plexus-agent[serial]     # Serial/UART (GPS, custom devices)
 pip install plexus-agent[ros]        # ROS1/ROS2 bag import
 pip install plexus-agent[tui]        # Live terminal dashboard
 pip install plexus-agent[system]     # System health (psutil)
@@ -46,7 +48,7 @@ Found 3 sensors on I2C bus 1:
 
   [1] ✓ BME280       temperature, humidity, pressure
   [2] ✓ MPU6050      accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z
-  [3] ✓ INA219       bus_voltage, current_ma, power_mw
+  [3] ✓ INA219       bus_voltage, shunt_voltage, current_ma, power_mw
 
 Stream all? [Y/n] or enter numbers to select (e.g., 1,3):
 ```
@@ -173,7 +175,7 @@ plexus add can                       # Add CAN bus support
 plexus add sensors camera            # Add multiple
 ```
 
-Available capabilities: `sensors`, `camera`, `mqtt`, `can`, `serial`, `system`, `tui`, `ros`.
+Available capabilities: `sensors`, `camera`, `picamera`, `mqtt`, `can`, `mavlink`, `serial`, `system`, `tui`, `ros`.
 
 ### plexus run
 
@@ -288,12 +290,20 @@ hub.run(Plexus())
 
 Built-in sensor drivers:
 
-| Sensor  | Type          | Metrics                                                   | Interface  |
-| ------- | ------------- | --------------------------------------------------------- | ---------- |
-| MPU6050 | 6-axis IMU    | accel_x/y/z, gyro_x/y/z                                   | I2C (0x68) |
-| MPU9250 | 9-axis IMU    | accel_x/y/z, gyro_x/y/z                                   | I2C (0x68) |
-| BME280  | Environmental | temperature, humidity, pressure                           | I2C (0x76) |
-| System  | System health | cpu.temperature, memory.used_pct, disk.used_pct, cpu.load | None       |
+| Sensor   | Type            | Metrics                                                   | Interface  |
+| -------- | --------------- | --------------------------------------------------------- | ---------- |
+| MPU6050  | 6-axis IMU      | accel_x/y/z, gyro_x/y/z                                  | I2C (0x68) |
+| MPU9250  | 6-axis IMU      | accel_x/y/z, gyro_x/y/z                                  | I2C (0x68) |
+| BME280   | Environmental   | temperature, humidity, pressure                           | I2C (0x76) |
+| INA219   | Current/Power   | bus_voltage, shunt_voltage, current_ma, power_mw          | I2C (0x40) |
+| SHT3x    | Temp/Humidity   | temperature, humidity                                     | I2C (0x44) |
+| BH1750   | Ambient Light   | illuminance                                               | I2C (0x23) |
+| VL53L0X  | Time-of-Flight  | distance_mm                                               | I2C (0x29) |
+| ADS1115  | 16-bit ADC      | channel_0, channel_1, channel_2, channel_3                | I2C (0x48) |
+| QMC5883L | Magnetometer    | mag_x, mag_y, mag_z, heading                              | I2C (0x0D) |
+| HMC5883L | Magnetometer    | mag_x, mag_y, mag_z, heading                              | I2C (0x1E) |
+| GPS      | GPS Receiver    | lat, lon, altitude, speed                                 | Serial     |
+| System   | System health   | cpu.temperature, memory.used_pct, disk.used_pct, cpu.load | None       |
 
 ### Custom Sensors
 
@@ -338,6 +348,27 @@ with adapter:
 ```
 
 Supports socketcan, pcan, vector, kvaser, and slcan interfaces. See `examples/can_basic.py` for more.
+
+## MAVLink (Drones / UAVs)
+
+Stream telemetry from MAVLink-speaking vehicles — ArduPilot, PX4, and other autopilots:
+
+```python
+from plexus import Plexus
+from plexus.adapters import MAVLinkAdapter
+
+px = Plexus(api_key="plx_xxx", source_id="drone-001")
+adapter = MAVLinkAdapter(
+    connection_string="udpin:0.0.0.0:14550",  # SITL or GCS
+)
+
+with adapter:
+    while True:
+        for metric in adapter.poll():
+            px.send(metric.name, metric.value, tags=metric.tags)
+```
+
+Decoded metrics include attitude (roll/pitch/yaw), GPS, battery, airspeed, RC channels, and more. Supports UDP, TCP, and serial connections. See `examples/mavlink_basic.py` for more.
 
 ## MQTT Bridge
 
