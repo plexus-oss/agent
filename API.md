@@ -13,15 +13,14 @@ Send telemetry data to Plexus using HTTP or WebSocket.
 │   app.plexus.company                     plexus-realtime.partykit.dev    │
 │   ├── /api/ingest           POST         ├── Device connections          │
 │   ├── /api/sessions         POST/PATCH   ├── Browser connections         │
-│   ├── /api/sources/pair     POST/GET     └── Real-time relay             │
-│   ├── /api/auth/verify-key  GET                                          │
-│   └── /api/auth/verify-device POST       (Device token verification)     │
+│   ├── /api/auth/device      POST/GET/PUT └── Real-time relay             │
+│   └── /api/auth/verify-key  GET                                          │
 │                                                                          │
 └──────────────────────────────────────────────────────────────────────────┘
 
          ▲                                        ▲
          │ HTTP                                   │ WebSocket
-         │ (API Key)                              │ (Device Token)
+         │ (API Key)                              │ (API Key)
     ┌────┴────┐                              ┌────┴────┐
     │ Scripts │                              │  Agent  │
     │ Devices │  Direct HTTP POST            │ plexus  │
@@ -72,25 +71,21 @@ curl -X POST https://app.plexus.company/api/ingest \
 
 ## Authentication
 
-Plexus uses two types of credentials:
+Plexus uses API keys for all authentication:
 
-| Type         | Prefix  | Use Case                                   |
-| ------------ | ------- | ------------------------------------------ |
-| Device Token | `plxd_` | WebSocket connections (agent `plexus run`) |
-| API Key      | `plx_`  | Direct HTTP access (scripts, embedded IoT) |
+| Type    | Prefix | Use Case                                       |
+| ------- | ------ | ---------------------------------------------- |
+| API Key | `plx_` | HTTP access and WebSocket device connections   |
 
-### Getting a Device Token
+### Getting an API Key
 
-Device tokens are created automatically during pairing:
+**Option A: Device pairing (recommended for devices)**
 
-1. Go to [app.plexus.company/fleet](https://app.plexus.company/fleet)
-2. Click "Pair Source"
-3. Run the setup command on your device (or `plexus pair --code ABC123`)
-4. Device token is saved to `~/.plexus/config.json`
+1. Run `plexus pair` on your device
+2. Approve the pairing in your browser
+3. API key is saved to `~/.plexus/config.json`
 
-### Getting an API Key (for HTTP)
-
-For direct HTTP access without the agent:
+**Option B: Manual creation**
 
 1. Sign up at [app.plexus.company](https://app.plexus.company)
 2. Go to Settings → Developer
@@ -177,19 +172,19 @@ For real-time UI-controlled streaming, devices connect via WebSocket.
 ### Connection Flow
 
 1. Device connects to PartyKit server
-2. Device authenticates with device token (or legacy API key)
+2. Device authenticates with API key
 3. Device reports available sensors
 4. Dashboard controls streaming via messages
 
 ### Device Authentication
 
-Devices authenticate using a device token (from pairing) or API key (legacy):
+Devices authenticate using an API key:
 
 ```json
-// Device → Server (using device token - recommended)
+// Device → Server
 {
   "type": "device_auth",
-  "device_token": "plxd_xxxxx",
+  "api_key": "plx_xxxxx",
   "source_id": "my-device-001",
   "platform": "Linux",
   "sensors": [
@@ -202,15 +197,6 @@ Devices authenticate using a device token (from pairing) or API key (legacy):
       "available": true
     }
   ]
-}
-
-// Device → Server (using API key - legacy, still supported)
-{
-  "type": "device_auth",
-  "api_key": "plx_xxxxx",
-  "source_id": "my-device-001",
-  "platform": "Linux",
-  "sensors": []
 }
 
 // Server → Device

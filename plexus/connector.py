@@ -18,8 +18,7 @@ User Controls (from Dashboard UI):
 - "Record"    → store=True  → WebSocket + HTTP (uses storage quota)
 
 Authentication:
-- API key (plx_*) is the primary auth method
-- Device token (plxd_*) supported as fallback for existing paired devices
+- API key (plx_*) is the auth method for all device connections
 """
 
 import asyncio
@@ -62,7 +61,6 @@ class PlexusConnector:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        device_token: Optional[str] = None,
         endpoint: Optional[str] = None,
         source_id: Optional[str] = None,
         org_id: Optional[str] = None,
@@ -75,9 +73,7 @@ class PlexusConnector:
         command_denylist: Optional[List[str]] = None,
         command_registry: Optional[CommandRegistry] = None,
     ):
-        # API key is preferred; device_token kept as fallback for existing paired devices
         self.api_key = api_key or get_api_key()
-        self.device_token = device_token
         self.endpoint = (endpoint or get_endpoint()).rstrip("/")
         self.source_id = source_id or get_source_id()
         self.org_id = org_id or get_org_id() or "default"
@@ -151,10 +147,8 @@ class PlexusConnector:
         if self._http_session is None:
             import requests
             self._http_session = requests.Session()
-            # Device token or API key - both work for /api/ingest
-            auth_token = self.api_key or self.device_token
-            if auth_token:
-                self._http_session.headers["x-api-key"] = auth_token
+            if self.api_key:
+                self._http_session.headers["x-api-key"] = self.api_key
             self._http_session.headers["Content-Type"] = "application/json"
             from plexus import __version__
             self._http_session.headers["User-Agent"] = f"plexus-agent/{__version__}"
@@ -162,7 +156,7 @@ class PlexusConnector:
 
     def _persist_points(self, points: List[Dict[str, Any]]) -> bool:
         """Persist data points to ClickHouse via HTTP."""
-        if not self.api_key and not self.device_token:
+        if not self.api_key:
             return False
 
         try:
@@ -203,8 +197,8 @@ class PlexusConnector:
         1s → 2s → 4s → 8s → ... → 60s max, with ±25% jitter.
         Backoff resets after a successful connection that lasts >30s.
         """
-        if not self.device_token and not self.api_key:
-            raise ValueError("No credentials. Run 'plexus pair' first.")
+        if not self.api_key:
+            raise ValueError("No API key. Run 'plexus pair' first.")
 
         ws_url = self._get_ws_url()
         self.on_status(f"Connecting to {ws_url}...")
@@ -226,6 +220,7 @@ class PlexusConnector:
                     # Build auth message
                     auth_msg = {
                         "type": "device_auth",
+                        "api_key": self.api_key,
                         "source_id": self.source_id,
                         "platform": platform.system(),
                         "sensors": self.sensor_hub.get_info() if self.sensor_hub else [],
@@ -240,10 +235,6 @@ class PlexusConnector:
                         ] if self.mavlink_connections else [],
                         "commands": self._typed_commands.get_schemas(),
                     }
-                    if self.api_key:
-                        auth_msg["api_key"] = self.api_key
-                    elif self.device_token:
-                        auth_msg["device_token"] = self.device_token
 
                     await ws.send(json.dumps(auth_msg))
                     self.on_status("Authenticating...")
@@ -333,7 +324,6 @@ class PlexusConnector:
 
 def run_connector(
     api_key: Optional[str] = None,
-    device_token: Optional[str] = None,
     endpoint: Optional[str] = None,
     on_status: Optional[Callable[[str], None]] = None,
     sensor_hub: Optional["SensorHub"] = None,
@@ -349,7 +339,6 @@ def run_connector(
 
     connector = PlexusConnector(
         api_key=api_key,
-        device_token=device_token,
         endpoint=endpoint,
         on_status=on_status,
         sensor_hub=sensor_hub,
