@@ -92,6 +92,10 @@ class SqliteBuffer(BufferBackend):
         if path is None:
             plexus_dir = os.path.join(os.path.expanduser("~"), ".plexus")
             os.makedirs(plexus_dir, exist_ok=True)
+            try:
+                os.chmod(plexus_dir, 0o700)
+            except OSError:
+                pass  # Windows or restricted filesystem
             path = os.path.join(plexus_dir, "buffer.db")
 
         self._path = path

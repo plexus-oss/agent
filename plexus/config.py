@@ -82,6 +82,10 @@ def load_config() -> dict:
 def save_config(config: dict) -> None:
     """Save config to file."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(CONFIG_DIR, 0o700)
+    except OSError:
+        pass  # Windows or restricted filesystem
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=2)
     # Set restrictive permissions (API key is sensitive)
