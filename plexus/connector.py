@@ -72,6 +72,7 @@ class PlexusConnector:
         command_allowlist: Optional[List[str]] = None,
         command_denylist: Optional[List[str]] = None,
         command_registry: Optional[CommandRegistry] = None,
+        max_reconnect_attempts: Optional[int] = None,
     ):
         self.api_key = api_key or get_api_key()
         self.endpoint = (endpoint or get_endpoint()).rstrip("/")
@@ -82,10 +83,12 @@ class PlexusConnector:
         self.camera_hub = camera_hub
         self.can_adapters = can_adapters
         self.mavlink_connections = mavlink_connections
+        self.max_reconnect_attempts = max_reconnect_attempts
 
         self._ws = None
         self._running = False
         self._authenticated = False
+        self._reconnect_count = 0
         self._http_session: Optional[Any] = None
 
         # Typed command registry
@@ -204,6 +207,7 @@ class PlexusConnector:
         self.on_status(f"Connecting to {ws_url}...")
 
         self._running = True
+        self._reconnect_count = 0
         backoff = 1.0
         max_backoff = 60.0
 
@@ -214,7 +218,7 @@ class PlexusConnector:
                     self._ws = ws
                     self._authenticated = False
 
-                    # Reset backoff after stable connection (>30s)
+                    # Reset backoff and reconnect counter after stable connection (>30s)
                     backoff = 1.0
 
                     # Build auth message
@@ -251,8 +255,16 @@ class PlexusConnector:
                 # Don't escalate backoff if connection was stable (>30s)
                 if time.monotonic() - connected_at < 30:
                     backoff = min(backoff * 2, max_backoff)
+                    self._reconnect_count += 1
                 else:
                     backoff = 1.0
+                    self._reconnect_count = 0
+
+                # Check max reconnect attempts
+                if self.max_reconnect_attempts is not None and self._reconnect_count >= self.max_reconnect_attempts:
+                    self.on_status(f"Max reconnect attempts ({self.max_reconnect_attempts}) reached, giving up")
+                    break
+
                 # Add ±25% jitter to prevent thundering herd
                 jitter = backoff * random.uniform(0.75, 1.25)
                 delay = min(jitter, max_backoff)
@@ -333,6 +345,7 @@ def run_connector(
     command_allowlist: Optional[List[str]] = None,
     command_denylist: Optional[List[str]] = None,
     command_registry: Optional[CommandRegistry] = None,
+    max_reconnect_attempts: Optional[int] = None,
 ):
     """Run the connector (blocking). Handles SIGTERM for graceful shutdown."""
     import signal
@@ -348,6 +361,7 @@ def run_connector(
         command_allowlist=command_allowlist,
         command_denylist=command_denylist,
         command_registry=command_registry,
+        max_reconnect_attempts=max_reconnect_attempts,
     )
 
     def _handle_sigterm(signum, frame):
