@@ -90,7 +90,7 @@ class MAVLinkAdapter(ProtocolAdapter):
 
     Args:
         connection_string: MAVLink connection string (default: "udpin:0.0.0.0:14550")
-        baud: Serial baud rate (default: 57600)
+        baud: Serial baud rate (default: 57600). PX4 typically uses 115200.
         source_system: MAVLink system ID for this adapter (default: 255)
         source_component: MAVLink component ID (default: 0)
         dialect: MAVLink dialect (default: "ardupilotmega")
