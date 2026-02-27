@@ -61,10 +61,15 @@ def _nmea_to_decimal(raw: str, direction: str) -> Optional[float]:
     return decimal
 
 
-def _nmea_checksum(sentence: str) -> bool:
-    """Verify NMEA checksum (optional — returns True if no checksum present)."""
+def _validate_coordinate(lat: float, lon: float) -> bool:
+    """Check that lat/lon are within valid ranges."""
+    return -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0
+
+
+def _nmea_checksum(sentence: str, require_checksum: bool = True) -> bool:
+    """Verify NMEA checksum. Rejects sentences without checksum by default."""
     if "*" not in sentence:
-        return True
+        return not require_checksum
 
     body, checksum_str = sentence.rsplit("*", 1)
     # Remove leading $
@@ -152,7 +157,10 @@ class GPSSensor(BaseSensor):
         if len(fields) < 10:
             return
 
-        quality = int(fields[6]) if fields[6] else 0
+        try:
+            quality = int(fields[6]) if fields[6] else 0
+        except ValueError:
+            return
         if quality == 0:
             self._valid = False
             return
@@ -160,14 +168,28 @@ class GPSSensor(BaseSensor):
         lat = _nmea_to_decimal(fields[2], fields[3])
         lon = _nmea_to_decimal(fields[4], fields[5])
 
-        if lat is not None:
+        if lat is not None and lon is not None:
+            if not _validate_coordinate(lat, lon):
+                return
             self._latitude = lat
-        if lon is not None:
+            self._longitude = lon
+        elif lat is not None:
+            self._latitude = lat
+        elif lon is not None:
             self._longitude = lon
 
-        self._satellites = int(fields[7]) if fields[7] else None
-        self._hdop = float(fields[8]) if fields[8] else None
-        self._altitude = float(fields[9]) if fields[9] else None
+        try:
+            self._satellites = int(fields[7]) if fields[7] else None
+        except ValueError:
+            self._satellites = None
+        try:
+            self._hdop = float(fields[8]) if fields[8] else None
+        except ValueError:
+            self._hdop = None
+        try:
+            self._altitude = float(fields[9]) if fields[9] else None
+        except ValueError:
+            self._altitude = None
         self._valid = True
 
     def _parse_rmc(self, fields: List[str]) -> None:
@@ -181,12 +203,20 @@ class GPSSensor(BaseSensor):
         lat = _nmea_to_decimal(fields[3], fields[4])
         lon = _nmea_to_decimal(fields[5], fields[6])
 
-        if lat is not None:
+        if lat is not None and lon is not None:
+            if not _validate_coordinate(lat, lon):
+                return
             self._latitude = lat
-        if lon is not None:
+            self._longitude = lon
+        elif lat is not None:
+            self._latitude = lat
+        elif lon is not None:
             self._longitude = lon
 
-        self._speed_knots = float(fields[7]) if fields[7] else None
+        try:
+            self._speed_knots = float(fields[7]) if fields[7] else None
+        except ValueError:
+            self._speed_knots = None
         self._valid = True
 
     def _process_line(self, line: str) -> None:
@@ -242,6 +272,18 @@ class GPSSensor(BaseSensor):
             readings.append(SensorReading("gps_hdop", round(self._hdop, 1)))
 
         return readings
+
+    def validate_reading(self, reading: "SensorReading") -> bool:
+        """Reject readings with out-of-range values."""
+        if reading.metric == "gps_latitude" and not (-90.0 <= reading.value <= 90.0):
+            return False
+        if reading.metric == "gps_longitude" and not (-180.0 <= reading.value <= 180.0):
+            return False
+        if reading.metric == "gps_altitude" and not (-1000.0 <= reading.value <= 100000.0):
+            return False
+        if reading.metric == "gps_satellites" and not (0 <= reading.value <= 100):
+            return False
+        return True
 
     def is_available(self) -> bool:
         """Check if a GPS module is connected and sending data."""
