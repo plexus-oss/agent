@@ -112,7 +112,18 @@ def scan_i2c(bus: int = 1) -> List[int]:
         )
 
     addresses = []
-    i2c = SMBus(bus)
+    try:
+        i2c = SMBus(bus)
+    except PermissionError:
+        logger.warning(
+            "Permission denied opening I2C bus %d. "
+            "Try: sudo usermod -aG i2c $USER && reboot",
+            bus,
+        )
+        return []
+    except OSError as e:
+        logger.debug("Could not open I2C bus %d: %s", bus, e)
+        return []
 
     for addr in range(0x03, 0x78):  # Valid I2C address range
         try:
@@ -141,8 +152,6 @@ def scan_sensors(bus: int = 1) -> List[DetectedSensor]:
     try:
         addresses = scan_i2c(bus)
     except ImportError:
-        return []
-    except Exception:
         return []
 
     detected = []
