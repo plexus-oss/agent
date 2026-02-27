@@ -7,6 +7,7 @@ All sensor drivers inherit from BaseSensor and implement the read() method.
 import logging
 import time
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 
@@ -45,6 +46,9 @@ class BaseSensor(ABC):
     # I2C address(es) for auto-detection
     i2c_addresses: List[int] = []
 
+    # Per-sensor read timeout (seconds). None = use SensorHub default.
+    read_timeout: Optional[float] = None
+
     def __init__(
         self,
         sample_rate: float = 10.0,
@@ -64,6 +68,18 @@ class BaseSensor(ABC):
         self.tags = tags or {}
         self._running = False
         self._error: Optional[str] = None
+        self._consecutive_failures = 0
+        self._disabled = False
+        self._original_sample_rate = sample_rate
+
+    def validate_reading(self, reading: "SensorReading") -> bool:
+        """
+        Validate a sensor reading. Override in subclasses for domain checks.
+
+        Returns:
+            True if the reading is valid
+        """
+        return True
 
     @abstractmethod
     def read(self) -> List[SensorReading]:
@@ -136,9 +152,20 @@ class SensorHub:
         hub.run(Plexus())  # Streams forever
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        default_timeout: float = 5.0,
+        max_workers: Optional[int] = None,
+    ):
+        """
+        Args:
+            default_timeout: Default per-sensor read timeout in seconds.
+            max_workers: Max threads for concurrent reads. None = number of sensors.
+        """
         self.sensors: List[BaseSensor] = []
         self._running = False
+        self.default_timeout = default_timeout
+        self.max_workers = max_workers
 
     def add(self, sensor: BaseSensor) -> "SensorHub":
         """Add a sensor to the hub."""
@@ -167,16 +194,71 @@ class SensorHub:
             except Exception:
                 pass
 
+    def _get_timeout(self, sensor: BaseSensor) -> float:
+        """Get the effective timeout for a sensor."""
+        return sensor.read_timeout if sensor.read_timeout is not None else self.default_timeout
+
+    def _handle_sensor_failure(self, sensor: BaseSensor) -> None:
+        """Track consecutive failures and degrade gracefully."""
+        sensor._consecutive_failures += 1
+        if sensor._consecutive_failures >= 5 and not sensor._disabled:
+            new_rate = sensor.sample_rate / 2.0
+            if new_rate < 0.1:
+                sensor._disabled = True
+                logger.warning(
+                    "%s disabled after %d consecutive failures",
+                    sensor.name, sensor._consecutive_failures,
+                )
+            else:
+                sensor.sample_rate = new_rate
+                logger.warning(
+                    "%s: %d consecutive failures, reducing poll rate to %.2f Hz",
+                    sensor.name, sensor._consecutive_failures, new_rate,
+                )
+
+    def _handle_sensor_success(self, sensor: BaseSensor) -> None:
+        """Reset failure tracking on successful read."""
+        if sensor._consecutive_failures > 0:
+            sensor._consecutive_failures = 0
+            if sensor.sample_rate != sensor._original_sample_rate:
+                sensor.sample_rate = sensor._original_sample_rate
+                logger.info(
+                    "%s recovered, restoring poll rate to %.2f Hz",
+                    sensor.name, sensor._original_sample_rate,
+                )
+
     def read_all(self) -> List[SensorReading]:
-        """Read from all sensors once."""
+        """Read from all sensors concurrently with per-sensor timeouts."""
+        active = [s for s in self.sensors if not s._disabled]
+        if not active:
+            return []
+
         readings = []
-        for sensor in self.sensors:
-            try:
-                sensor_readings = sensor.read()
-                readings.extend(sensor_readings)
-            except Exception as e:
-                logger.debug(f"Read error from {sensor.name}: {e}")
-                sensor._error = str(e)
+        workers = self.max_workers or len(active)
+        pool = ThreadPoolExecutor(max_workers=workers)
+
+        try:
+            futures = {pool.submit(s.read): s for s in active}
+            for future in futures:
+                sensor = futures[future]
+                timeout = self._get_timeout(sensor)
+                try:
+                    sensor_readings = future.result(timeout=timeout)
+                    validated = [r for r in sensor_readings if sensor.validate_reading(r)]
+                    readings.extend(validated)
+                    self._handle_sensor_success(sensor)
+                except FuturesTimeoutError:
+                    logger.warning("Timeout reading %s (%.1fs)", sensor.name, timeout)
+                    sensor._error = f"timeout ({timeout}s)"
+                    future.cancel()
+                    self._handle_sensor_failure(sensor)
+                except Exception as e:
+                    logger.debug(f"Read error from {sensor.name}: {e}")
+                    sensor._error = str(e)
+                    self._handle_sensor_failure(sensor)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
         return readings
 
     def run(
@@ -209,43 +291,64 @@ class SensorHub:
                     loop_start = time.time()
                     now = loop_start
 
+                    # Collect sensors that are due for a read
+                    due_sensors = []
                     for sensor in self.sensors:
+                        if sensor._disabled:
+                            continue
                         sensor_id = id(sensor)
                         interval = 1.0 / sensor.sample_rate
-
                         if now - last_read[sensor_id] >= interval:
-                            try:
-                                readings = sensor.read()
+                            due_sensors.append(sensor)
 
-                                # Batch all readings from this sensor together
-                                # This sends one HTTP request with all metrics, enabling
-                                # instant streaming updates in the frontend
-                                batch_points = []
-                                batch_timestamp = None
-                                batch_tags = None
+                    if due_sensors:
+                        # Read all due sensors concurrently
+                        workers = self.max_workers or len(due_sensors)
+                        pool = ThreadPoolExecutor(max_workers=workers)
+                        try:
+                            futures = {pool.submit(s.read): s for s in due_sensors}
+                            for future in futures:
+                                sensor = futures[future]
+                                timeout = self._get_timeout(sensor)
+                                try:
+                                    readings = future.result(timeout=timeout)
+                                    validated = [r for r in readings if sensor.validate_reading(r)]
+                                    self._handle_sensor_success(sensor)
 
-                                for reading in readings:
-                                    metric = sensor.get_prefixed_metric(reading.metric)
-                                    tags = {**sensor.tags, **reading.tags}
-                                    batch_points.append((metric, reading.value))
+                                    batch_points = []
+                                    batch_timestamp = None
+                                    batch_tags = None
 
-                                    # Use first reading's timestamp and merge tags
-                                    if batch_timestamp is None:
-                                        batch_timestamp = reading.timestamp
-                                        batch_tags = tags if tags else None
+                                    for reading in validated:
+                                        metric = sensor.get_prefixed_metric(reading.metric)
+                                        tags = {**sensor.tags, **reading.tags}
+                                        batch_points.append((metric, reading.value))
 
-                                # Send all readings in one request
-                                if batch_points:
-                                    client.send_batch(
-                                        batch_points,
-                                        timestamp=batch_timestamp,
-                                        tags=batch_tags,
-                                    )
+                                        if batch_timestamp is None:
+                                            batch_timestamp = reading.timestamp
+                                            batch_tags = tags if tags else None
 
-                                last_read[sensor_id] = now
+                                    if batch_points:
+                                        client.send_batch(
+                                            batch_points,
+                                            timestamp=batch_timestamp,
+                                            tags=batch_tags,
+                                        )
 
-                            except Exception as e:
-                                sensor._error = str(e)
+                                    last_read[id(sensor)] = now
+
+                                except FuturesTimeoutError:
+                                    logger.warning("Timeout reading %s (%.1fs)", sensor.name, timeout)
+                                    sensor._error = f"timeout ({timeout}s)"
+                                    future.cancel()
+                                    self._handle_sensor_failure(sensor)
+                                    last_read[id(sensor)] = now
+                                except Exception as e:
+                                    sensor._error = str(e)
+                                    self._handle_sensor_failure(sensor)
+                                    last_read[id(sensor)] = now
+                        finally:
+                            pool.shutdown(wait=False, cancel_futures=True)
 
                     # Sleep to maintain timing
                     elapsed = time.time() - loop_start
