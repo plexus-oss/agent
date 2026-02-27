@@ -12,7 +12,7 @@ import os
 import sqlite3
 import threading
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +43,9 @@ class MemoryBuffer(BufferBackend):
     This extracts the original behavior from Plexus client._failed_buffer.
     """
 
-    def __init__(self, max_size: int = 10_000):
+    def __init__(self, max_size: int = 10_000, on_overflow: Optional[Callable[[int], None]] = None):
         self._max_size = max_size
+        self._on_overflow = on_overflow
         self._buffer: List[Dict[str, Any]] = []
         self._lock = threading.Lock()
 
@@ -55,6 +56,8 @@ class MemoryBuffer(BufferBackend):
                 overflow = len(self._buffer) - self._max_size
                 logger.warning("Buffer full, dropped %d oldest points", overflow)
                 self._buffer = self._buffer[overflow:]
+                if self._on_overflow:
+                    self._on_overflow(overflow)
 
     def get_all(self) -> List[Dict[str, Any]]:
         with self._lock:
@@ -85,8 +88,10 @@ class SqliteBuffer(BufferBackend):
         self,
         path: Optional[str] = None,
         max_size: int = 100_000,
+        on_overflow: Optional[Callable[[int], None]] = None,
     ):
         self._max_size = max_size
+        self._on_overflow = on_overflow
         self._lock = threading.Lock()
 
         if path is None:
@@ -154,3 +159,5 @@ class SqliteBuffer(BufferBackend):
             )
             self._conn.commit()
             logger.warning("Buffer full, dropped %d oldest points", overflow)
+            if self._on_overflow:
+                self._on_overflow(overflow)

@@ -68,6 +68,21 @@ class TestMemoryBuffer(BufferTests):
     def make_buffer(self, max_size=100):
         return MemoryBuffer(max_size=max_size)
 
+    def test_overflow_callback(self):
+        """on_overflow callback should receive the number of dropped points."""
+        dropped = []
+        buf = MemoryBuffer(max_size=5, on_overflow=lambda n: dropped.append(n))
+        buf.add(_make_points(3))
+        assert dropped == []
+        buf.add(_make_points(4, offset=10))
+        assert dropped == [2]  # 7 - 5 = 2 dropped
+
+    def test_no_callback_when_no_overflow(self):
+        dropped = []
+        buf = MemoryBuffer(max_size=10, on_overflow=lambda n: dropped.append(n))
+        buf.add(_make_points(5))
+        assert dropped == []
+
 
 # ===========================================================================
 # SqliteBuffer
@@ -80,6 +95,21 @@ class TestSqliteBuffer(BufferTests):
         self._tmpfile = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self._tmpfile.close()
         return SqliteBuffer(path=self._tmpfile.name, max_size=max_size)
+
+    def test_overflow_callback(self):
+        """on_overflow callback should receive the number of dropped points."""
+        dropped = []
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            buf = SqliteBuffer(path=tmp.name, max_size=5, on_overflow=lambda n: dropped.append(n))
+            buf.add(_make_points(3))
+            assert dropped == []
+            buf.add(_make_points(4, offset=10))
+            assert dropped == [2]
+            buf.close()
+        finally:
+            os.unlink(tmp.name)
 
     def test_persistence_across_instances(self):
         """Points survive when a new SqliteBuffer instance opens the same file."""
