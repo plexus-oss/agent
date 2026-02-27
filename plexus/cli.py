@@ -316,9 +316,9 @@ def start(key: Optional[str], name: Optional[str], bus: int):
     try:
         camera_hub, cameras = detect_cameras()
     except ImportError:
-        pass
-    except Exception:
-        pass
+        logger.debug("Camera support not installed (opencv-python missing)")
+    except Exception as e:
+        click.echo(click.style(f"  {Style.CROSS} Camera detection failed: {e}", fg=Style.WARNING))
 
     # CAN
     can_adapters, up_can, down_can = detect_can()
@@ -616,11 +616,13 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int, senso
             if prompt_install("cv2", extra="camera"):
                 try:
                     camera_hub, cameras = detect_cameras()
-                except Exception:
+                except Exception as e:
+                    logger.debug("Camera detection failed after install: %s", e)
                     cameras = []
             else:
                 cameras = []
-        except Exception:
+        except Exception as e:
+            click.echo(click.style(f"  {Style.CROSS} Camera detection failed: {e}", fg=Style.WARNING))
             cameras = []
 
     can_adapters, up_can, down_can = detect_can()
