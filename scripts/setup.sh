@@ -282,7 +282,7 @@ else
     echo ""
     echo "  To pair this device:"
     echo ""
-    echo "  1. Go to ${CYAN}https://app.plexus.company/fleet${NC}"
+    echo "  1. Go to ${CYAN}https://app.plexus.company/devices${NC}"
     echo "  2. Click \"Add Device\" to get a pairing code"
     echo "  3. Run: ${CYAN}plexus pair --code YOUR_CODE${NC}"
     echo ""

@@ -42,7 +42,6 @@ DEPENDENCY_MAP = {
     "mcap": ("mcap>=1.0.0", "ros", "MCAP format support"),
     "serial": ("pyserial>=3.5", "serial", "Serial port communication"),
     "rich": ("rich>=13.0.0", "tui", "Rich terminal output"),
-    "textual": ("textual>=0.40.0", "tui", "Terminal user interface"),
     "bluetooth": ("pybluez>=0.23", "bluetooth", "Bluetooth device scanning"),
     "psutil": ("psutil>=5.9.0", "system", "System resource monitoring"),
 }

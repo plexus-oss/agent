@@ -45,11 +45,11 @@ Set up your device with one command. Use an API key for fleet provisioning, or a
 # With API key (fleet provisioning — get from Settings → Developer)
 curl -sL https://app.plexus.company/setup | bash -s -- --key plx_your_api_key
 
-# With pairing code (single device — get from app.plexus.company/fleet)
+# With pairing code (single device — get from app.plexus.company/devices)
 curl -sL https://app.plexus.company/setup | bash -s -- --code ABC123
 ```
 
-Then control streaming, recording, and configuration from [app.plexus.company/fleet](https://app.plexus.company/fleet).
+Then control streaming, recording, and configuration from [app.plexus.company/devices](https://app.plexus.company/devices).
 
 ### Option 2: Direct HTTP
 

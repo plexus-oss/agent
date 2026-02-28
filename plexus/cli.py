@@ -256,7 +256,7 @@ def start(key: Optional[str], name: Optional[str], bus: int):
         click.echo()
         api_key = click.prompt(
             click.style("  Paste API key", fg=Style.INFO)
-            + click.style(" (from app.plexus.company/fleet)", fg=Style.DIM),
+            + click.style(" (from app.plexus.company/devices)", fg=Style.DIM),
             type=str,
         ).strip()
         if not api_key:
@@ -277,7 +277,7 @@ def start(key: Optional[str], name: Optional[str], bus: int):
     else:
         spinner.stop("API key invalid or server unreachable", success_status=False)
         click.echo()
-        hint("Check your key at app.plexus.company/fleet")
+        hint("Check your key at app.plexus.company/devices")
         click.echo()
         sys.exit(1)
 
@@ -392,7 +392,7 @@ def start(key: Optional[str], name: Optional[str], bus: int):
 
     # Dashboard link
     source_display = name or source_id
-    hint(f"View live: app.plexus.company/fleet/{source_display}")
+    hint(f"View live: app.plexus.company/devices/{source_display}")
     click.echo()
 
     # ── Start connector ───────────────────────────────────────────────────
@@ -843,7 +843,7 @@ def pair(key: Optional[str]):
     Two ways to pair:
 
     1. API key (recommended):
-       - Go to app.plexus.company/fleet
+       - Go to app.plexus.company/devices
        - Click "Add Device" for an API key
        - Run: plexus pair --key plx_xxx
 

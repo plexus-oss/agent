@@ -1,6 +1,6 @@
 # Plexus Agent
 
-Stream telemetry from any device to [Plexus](https://plexus.dev) — real-time observability for hardware systems.
+Stream telemetry from any device to [Plexus](https://plexus.dev) — HardwareOps. ingest. observe.
 
 ```python
 from plexus import Plexus
@@ -53,7 +53,7 @@ Found 3 sensors on I2C bus 1:
 Stream all? [Y/n] or enter numbers to select (e.g., 1,3):
 ```
 
-Get an API key from [app.plexus.company](https://app.plexus.company) → Fleet → Add Device.
+Get an API key from [app.plexus.company](https://app.plexus.company) → Devices → Add Device.
 
 ### Option 1: One-liner (recommended)
 
@@ -64,7 +64,7 @@ plexus start --key plx_xxxxx
 ### Option 2: Step by step
 
 ```bash
-# 1. Pair (one-time) — get your API key from app.plexus.company/fleet
+# 1. Pair (one-time) — get your API key from app.plexus.company/devices
 plexus pair --key plx_xxxxx
 
 # 2. Run the agent
@@ -122,7 +122,7 @@ See [API.md](API.md) for curl, JavaScript, Go, and Bash examples.
 
 | Method            | How to get it                                           | Used by                            |
 | ----------------- | ------------------------------------------------------- | ---------------------------------- |
-| API key (`plx_*`) | Dashboard → Fleet → Add Device, or Settings → Developer | `plexus run` and `Plexus()` client |
+| API key (`plx_*`) | Dashboard → Devices → Add Device, or Settings → Developer | `plexus run` and `Plexus()` client |
 
 Two ways to pair:
 
@@ -159,11 +159,11 @@ plexus start --key plx_xxx -b 0      # Specify I2C bus
 plexus start --name "robot-01"       # Name the device
 ```
 
-| Flag         | Description                              |
-| ------------ | ---------------------------------------- |
-| `-k, --key`  | API key (skips interactive auth prompt)  |
-| `-n, --name` | Device name for fleet identification     |
-| `-b, --bus`  | I2C bus number (default: 1)              |
+| Flag         | Description                             |
+| ------------ | --------------------------------------- |
+| `-k, --key`  | API key (skips interactive auth prompt) |
+| `-n, --name` | Device name for fleet identification    |
+| `-b, --bus`  | I2C bus number (default: 1)             |
 
 ### plexus add
 
@@ -290,20 +290,20 @@ hub.run(Plexus())
 
 Built-in sensor drivers:
 
-| Sensor   | Type            | Metrics                                                   | Interface  |
-| -------- | --------------- | --------------------------------------------------------- | ---------- |
-| MPU6050  | 6-axis IMU      | accel_x/y/z, gyro_x/y/z                                  | I2C (0x68) |
-| MPU9250  | 6-axis IMU      | accel_x/y/z, gyro_x/y/z                                  | I2C (0x68) |
-| BME280   | Environmental   | temperature, humidity, pressure                           | I2C (0x76) |
-| INA219   | Current/Power   | bus_voltage, shunt_voltage, current_ma, power_mw          | I2C (0x40) |
-| SHT3x    | Temp/Humidity   | temperature, humidity                                     | I2C (0x44) |
-| BH1750   | Ambient Light   | illuminance                                               | I2C (0x23) |
-| VL53L0X  | Time-of-Flight  | distance_mm                                               | I2C (0x29) |
-| ADS1115  | 16-bit ADC      | channel_0, channel_1, channel_2, channel_3                | I2C (0x48) |
-| QMC5883L | Magnetometer    | mag_x, mag_y, mag_z, heading                              | I2C (0x0D) |
-| HMC5883L | Magnetometer    | mag_x, mag_y, mag_z, heading                              | I2C (0x1E) |
-| GPS      | GPS Receiver    | lat, lon, altitude, speed                                 | Serial     |
-| System   | System health   | cpu.temperature, memory.used_pct, disk.used_pct, cpu.load | None       |
+| Sensor   | Type           | Metrics                                                   | Interface  |
+| -------- | -------------- | --------------------------------------------------------- | ---------- |
+| MPU6050  | 6-axis IMU     | accel_x/y/z, gyro_x/y/z                                   | I2C (0x68) |
+| MPU9250  | 6-axis IMU     | accel_x/y/z, gyro_x/y/z                                   | I2C (0x68) |
+| BME280   | Environmental  | temperature, humidity, pressure                           | I2C (0x76) |
+| INA219   | Current/Power  | bus_voltage, shunt_voltage, current_ma, power_mw          | I2C (0x40) |
+| SHT3x    | Temp/Humidity  | temperature, humidity                                     | I2C (0x44) |
+| BH1750   | Ambient Light  | illuminance                                               | I2C (0x23) |
+| VL53L0X  | Time-of-Flight | distance_mm                                               | I2C (0x29) |
+| ADS1115  | 16-bit ADC     | channel_0, channel_1, channel_2, channel_3                | I2C (0x48) |
+| QMC5883L | Magnetometer   | mag_x, mag_y, mag_z, heading                              | I2C (0x0D) |
+| HMC5883L | Magnetometer   | mag_x, mag_y, mag_z, heading                              | I2C (0x1E) |
+| GPS      | GPS Receiver   | lat, lon, altitude, speed                                 | Serial     |
+| System   | System health  | cpu.temperature, memory.used_pct, disk.used_pct, cpu.load | None       |
 
 ### Custom Sensors
 
