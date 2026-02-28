@@ -1,6 +1,9 @@
 # Plexus Agent
 
-Stream telemetry from any device to [Plexus](https://plexus.dev) — HardwareOps. ingest. observe.
+**Open-source Python SDK for IoT observability and hardware telemetry.** Stream sensor data, CAN bus, MAVLink, cameras, and MQTT from any device to [Plexus](https://plexus.company) — the HardwareOps platform for real-time monitoring and fleet management.
+
+[![PyPI](https://img.shields.io/pypi/v/plexus-agent)](https://pypi.org/project/plexus-agent/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 ```python
 from plexus import Plexus
@@ -9,7 +12,7 @@ px = Plexus()
 px.send("engine.rpm", 3450, tags={"unit": "A"})
 ```
 
-Works on any Linux system — edge compute nodes, test rigs, fleet vehicles, ground stations.
+Works on any Linux system — Raspberry Pi, edge compute nodes, test rigs, fleet vehicles, ground stations.
 
 ## Install
 
@@ -27,7 +30,6 @@ pip install plexus-agent[mqtt]       # MQTT bridge
 pip install plexus-agent[camera]     # USB cameras (OpenCV)
 pip install plexus-agent[picamera]   # Raspberry Pi Camera Module
 pip install plexus-agent[serial]     # Serial/UART (GPS, custom devices)
-pip install plexus-agent[ros]        # ROS1/ROS2 bag import
 pip install plexus-agent[tui]        # Live terminal dashboard
 pip install plexus-agent[system]     # System health (psutil)
 pip install plexus-agent[all]        # Everything
@@ -175,7 +177,7 @@ plexus add can                       # Add CAN bus support
 plexus add sensors camera            # Add multiple
 ```
 
-Available capabilities: `sensors`, `camera`, `picamera`, `mqtt`, `can`, `mavlink`, `serial`, `system`, `tui`, `ros`.
+Available capabilities: `sensors`, `camera`, `picamera`, `mqtt`, `can`, `mavlink`, `serial`, `system`, `tui`.
 
 ### plexus run
 
