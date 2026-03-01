@@ -6,7 +6,7 @@ Run with: pytest tests/test_mavlink_adapter.py -v
 
 import math
 import pytest
-from unittest.mock import Mock, patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock
 import time
 
 

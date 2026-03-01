@@ -34,7 +34,6 @@ Note: Requires authentication. Run 'plexus pair' or set PLEXUS_API_KEY.
 """
 
 import logging
-import threading
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -107,7 +106,7 @@ class Plexus:
         self.source_id = source_id or get_source_id()
         self.timeout = timeout
         self.retry_config = retry_config or RetryConfig()
-        self.max_buffer_size = max_buffer_size
+        self._max_buffer_size = max_buffer_size
 
         self._session_id: Optional[str] = None
         self._session: Optional[requests.Session] = None
@@ -122,6 +121,15 @@ class Plexus:
             )
         else:
             self._buffer: BufferBackend = MemoryBuffer(max_size=max_buffer_size)
+
+    @property
+    def max_buffer_size(self):
+        return self._max_buffer_size
+
+    @max_buffer_size.setter
+    def max_buffer_size(self, value):
+        self._max_buffer_size = value
+        self._buffer._max_size = value
 
     def _get_session(self) -> requests.Session:
         """Get or create a requests session for connection pooling."""

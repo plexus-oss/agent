@@ -13,7 +13,6 @@ import platform
 import shutil
 import socket
 import subprocess
-import sys
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Tuple, Dict, Any, TYPE_CHECKING
 

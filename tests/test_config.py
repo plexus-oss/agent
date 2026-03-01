@@ -2,11 +2,8 @@
 
 import os
 import stat
-import tempfile
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from plexus.config import save_config, load_config
 

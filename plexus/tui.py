@@ -12,7 +12,6 @@ Requires: pip install plexus-agent[tui] (installs 'rich')
 
 import time
 import threading
-from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Callable
 
@@ -22,9 +21,6 @@ try:
     from rich.console import Console
     from rich.live import Live
     from rich.table import Table
-    from rich.panel import Panel
-    from rich.layout import Layout
-    from rich.text import Text
     _rich_available = True
 except ImportError:
     pass

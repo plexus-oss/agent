@@ -4,9 +4,9 @@ import pytest
 
 websockets = pytest.importorskip("websockets")
 
-from unittest.mock import patch
+from unittest.mock import patch  # noqa: E402
 
-from plexus.connector import PlexusConnector
+from plexus.connector import PlexusConnector  # noqa: E402
 
 
 class TestConnectorReconnect:
