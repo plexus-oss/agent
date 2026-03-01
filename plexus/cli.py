@@ -18,8 +18,6 @@ from typing import Optional
 
 import click
 
-logger = logging.getLogger(__name__)
-
 from plexus import __version__
 from plexus.client import Plexus, AuthenticationError, PlexusError
 from plexus.config import (
@@ -30,6 +28,8 @@ from plexus.config import (
     get_source_id,
     get_config_path,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -294,7 +294,7 @@ def start(key: Optional[str], name: Optional[str], bus: int):
     try:
         sensor_hub, sensors = detect_sensors(bus)
     except PermissionError:
-        i2c_error = f"I2C permission denied (run: sudo usermod -aG i2c $USER)"
+        i2c_error = "I2C permission denied (run: sudo usermod -aG i2c $USER)"
     except ImportError:
         from plexus.deps import prompt_install
         if prompt_install("smbus2", extra="sensors"):
@@ -443,7 +443,7 @@ def add(capabilities: tuple):
         plexus add can                 # Add CAN bus support
         plexus add sensors camera      # Add multiple
     """
-    from plexus.deps import is_available, DEPENDENCY_MAP
+    from plexus.deps import is_available
     import subprocess
 
     if not capabilities:
@@ -593,7 +593,7 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int, senso
         try:
             sensor_hub, sensors = detect_sensors(bus)
         except PermissionError:
-            i2c_error = f"permission denied (run: sudo usermod -aG i2c $USER)"
+            i2c_error = "permission denied (run: sudo usermod -aG i2c $USER)"
         except ImportError:
             from plexus.deps import prompt_install
             if prompt_install("smbus2", extra="sensors"):
@@ -602,7 +602,7 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int, senso
                 except Exception as e:
                     i2c_error = str(e)
             else:
-                i2c_error = f"smbus2 not installed (run: pip install plexus-agent[sensors])"
+                i2c_error = "smbus2 not installed (run: pip install plexus-agent[sensors])"
         except Exception as e:
             i2c_error = str(e)
 
@@ -1587,7 +1587,7 @@ def doctor():
                 _pass(f"I2C bus {bus_num}: accessible")
             else:
                 _fail(f"I2C bus {bus_num}: permission denied")
-                dim(f"    Fix: sudo usermod -aG i2c $USER")
+                dim("    Fix: sudo usermod -aG i2c $USER")
 
     # Serial ports
     import glob
@@ -1597,7 +1597,7 @@ def doctor():
             _pass(f"{port}: accessible")
         else:
             _fail(f"{port}: permission denied")
-            dim(f"    Fix: sudo usermod -aG dialout $USER")
+            dim("    Fix: sudo usermod -aG dialout $USER")
 
     # Camera
     video_devs = glob.glob("/dev/video*")
@@ -1606,7 +1606,7 @@ def doctor():
             _pass(f"{dev}: accessible")
         else:
             _fail(f"{dev}: permission denied")
-            dim(f"    Fix: sudo usermod -aG video $USER")
+            dim("    Fix: sudo usermod -aG video $USER")
 
     if not any(os.path.exists(p) for p in ["/dev/i2c-0", "/dev/i2c-1"]) and not serial_ports and not video_devs:
         dim("  No hardware devices detected on this system")
@@ -1636,7 +1636,6 @@ def doctor():
 
     # ── Summary ──────────────────────────────────────────────────────────
 
-    total = checks_passed + checks_failed + checks_warned
     if checks_failed == 0:
         click.secho(
             f"  {Style.CHECK} All {checks_passed} checks passed",

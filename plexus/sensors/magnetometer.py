@@ -102,9 +102,12 @@ class QMC5883L(BaseSensor):
         z = (data[5] << 8) | data[4]
 
         # Convert to signed
-        if x > 32767: x -= 65536
-        if y > 32767: y -= 65536
-        if z > 32767: z -= 65536
+        if x > 32767:
+            x -= 65536
+        if y > 32767:
+            y -= 65536
+        if z > 32767:
+            z -= 65536
 
         # At 8 Gauss range: 3000 LSB/Gauss, 1 Gauss = 100 µT
         # So LSB = 100/3000 µT ≈ 0.0333 µT
@@ -205,9 +208,12 @@ class HMC5883L(BaseSensor):
         y = (data[4] << 8) | data[5]
 
         # Convert to signed
-        if x > 32767: x -= 65536
-        if y > 32767: y -= 65536
-        if z > 32767: z -= 65536
+        if x > 32767:
+            x -= 65536
+        if y > 32767:
+            y -= 65536
+        if z > 32767:
+            z -= 65536
 
         # At 1.3 Gauss gain: 1090 LSB/Gauss, 1 Gauss = 100 µT
         scale = 100.0 / 1090.0

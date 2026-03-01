@@ -3,7 +3,6 @@
 import os
 import tempfile
 
-import pytest
 
 from plexus.buffer import MemoryBuffer, SqliteBuffer
 

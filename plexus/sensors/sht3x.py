@@ -74,7 +74,7 @@ class SHT3x(BaseSensor):
 
     def setup(self) -> None:
         try:
-            from smbus2 import SMBus, i2c_msg
+            from smbus2 import SMBus
         except ImportError:
             raise ImportError(
                 "smbus2 is required for SHT3x. Install with: pip install smbus2"

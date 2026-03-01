@@ -1,6 +1,5 @@
 """Tests for GPS NMEA parsing hardening."""
 
-import pytest
 
 from plexus.sensors.gps import (
     _nmea_checksum,

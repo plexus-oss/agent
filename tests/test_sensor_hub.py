@@ -1,9 +1,8 @@
 """Tests for SensorHub concurrent reads, timeouts, and failure handling."""
 
 import time
-from typing import Dict, List, Optional
+from typing import List
 
-import pytest
 
 from plexus.sensors.base import BaseSensor, SensorHub, SensorReading
 

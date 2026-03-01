@@ -22,7 +22,6 @@ Or with auto-detection:
             print(f"{reading.metric}: {reading.value}")
 """
 
-import time
 import logging
 from typing import List, Optional
 from .base import BaseSensor, SensorReading
