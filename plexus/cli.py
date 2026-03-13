@@ -5,7 +5,7 @@ Simplified CLI - all device control happens through the web UI.
 
 Usage:
     plexus run                     # Start the agent
-    plexus pair                    # Pair device with web dashboard
+    plexus login                   # Sign in with web dashboard
     plexus status                  # Check connection status
     plexus scan                    # List detected sensors
 """
@@ -198,7 +198,8 @@ def main():
 
     Or step by step:
 
-        plexus pair --key plx_xxx      # Pair with dashboard (one-time)
+        plexus login                   # Sign in (one-time)
+        plexus start --key plx_xxx     # Or use an API key directly
         plexus run                     # Start the agent
 
     Add capabilities:
@@ -218,8 +219,10 @@ def main():
 @main.command()
 @click.option("--key", "-k", help="API key from dashboard")
 @click.option("--name", "-n", help="Device name for identification")
+@click.option("--slug", "-s", help="Device slug (source ID) from dashboard")
+@click.option("--org", help="Organization ID from dashboard")
 @click.option("--bus", "-b", default=1, type=int, help="I2C bus number for sensors")
-def start(key: Optional[str], name: Optional[str], bus: int):
+def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Optional[str], bus: int):
     """
     Set up and start streaming in one command.
 
@@ -228,9 +231,10 @@ def start(key: Optional[str], name: Optional[str], bus: int):
 
     Examples:
 
-        plexus start                        # Interactive setup
-        plexus start --key plx_xxx          # Non-interactive auth
-        plexus start --key plx_xxx -b 0     # Specify I2C bus
+        plexus start                                        # Interactive setup
+        plexus start --key plx_xxx                          # Non-interactive auth
+        plexus start --key plx_xxx --slug my-drone --org org_123  # Full setup
+        plexus start --key plx_xxx -b 0                     # Specify I2C bus
     """
     from plexus.connector import run_connector
     from plexus.detect import detect_sensors, detect_cameras, detect_can
@@ -280,6 +284,17 @@ def start(key: Optional[str], name: Optional[str], bus: int):
         hint("Check your key at app.plexus.company/devices")
         click.echo()
         sys.exit(1)
+
+    # ── Slug / Org ──────────────────────────────────────────────────────
+    if slug or org:
+        config = load_config()
+        if slug:
+            config["source_id"] = slug
+            success(f"Source ID: {slug}")
+        if org:
+            config["org_id"] = org
+            success(f"Org ID: {org}")
+        save_config(config)
 
     click.echo()
 
@@ -562,7 +577,7 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int, senso
         click.echo()
         click.secho(f"  Plexus Agent v{__version__}", bold=True)
         click.echo()
-        label("Auth", click.style("(missing)", fg=Style.ERROR) + " — run: plexus pair --key <your-api-key>")
+        label("Auth", click.style("(missing)", fg=Style.ERROR) + " — run: plexus start --key <your-api-key>")
         click.echo()
         sys.exit(1)
 
@@ -772,10 +787,10 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int, senso
             for m in metrics:
                 try:
                     px.send(m.name, m.value, tags=m.tags or {})
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"MQTT forward failed: {e}")
 
-        mqtt_adapter.on_data = _mqtt_forwarder
+        mqtt_adapter._on_data_callback = _mqtt_forwarder
         try:
             mqtt_adapter.connect()
             mqtt_thread = threading.Thread(target=mqtt_adapter._run_loop, daemon=True)
@@ -832,162 +847,132 @@ def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int, senso
 
 
 @main.command()
-@click.option("--key", "-k", help="API key from dashboard")
-def pair(key: Optional[str]):
+def login():
     """
-    Pair this device with your Plexus account.
+    Sign in to your Plexus account via the browser.
 
-    Use an API key from the dashboard, or sign in directly.
-    This is a one-time setup - after pairing, just run 'plexus run'.
+    Opens a browser window to authenticate with your Plexus account.
+    This is a one-time setup - after signing in, use 'plexus start' to run.
 
-    Two ways to pair:
-
-    1. API key (recommended):
-       - Go to app.plexus.company/devices
-       - Click "Add Device" for an API key
-       - Run: plexus pair --key plx_xxx
-
-    2. Direct login:
-       - Run: plexus pair
-       - Opens browser to sign in
+    For API key authentication, use 'plexus start --key plx_xxx' instead.
 
     Examples:
 
-        plexus pair --key plx_xxx      # Use API key from dashboard
-        plexus pair                    # Opens browser to sign in
+        plexus login                   # Opens browser to sign in
+        plexus start --key plx_xxx     # Or use an API key directly
     """
     import webbrowser
 
     base_endpoint = "https://app.plexus.company"
 
-    header("Device Pairing")
+    header("Plexus Login")
 
-    if key:
-        # ─────────────────────────────────────────────────────────────────────
-        # API key pairing (recommended)
-        # ─────────────────────────────────────────────────────────────────────
-        config = load_config()
-        config["api_key"] = key
-        save_config(config)
+    # ─────────────────────────────────────────────────────────────────────
+    # OAuth device flow
+    # ─────────────────────────────────────────────────────────────────────
+    spinner = Spinner("Requesting authorization...")
+    spinner.start()
 
-        success("API key saved")
-        click.echo()
-        hint("Start the agent with: plexus run")
-        click.echo()
-        return
+    try:
+        import requests
+        response = requests.post(
+            f"{base_endpoint}/api/auth/device",
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
 
-    else:
-        # ─────────────────────────────────────────────────────────────────────
-        # OAuth device flow
-        # ─────────────────────────────────────────────────────────────────────
-        spinner = Spinner("Requesting authorization...")
-        spinner.start()
+        if response.status_code != 200:
+            spinner.stop(f"Failed to start login: {response.text}", success_status=False)
+            sys.exit(1)
+
+        data = response.json()
+        device_code = data["device_code"]
+        user_code = data["user_code"]
+        verification_url = data["verification_uri_complete"]
+        interval = data.get("interval", 5)
+        expires_in = data.get("expires_in", 900)
+
+        spinner.stop()
+
+    except Exception as e:
+        spinner.stop(f"Error: {e}", success_status=False)
+        sys.exit(1)
+
+    # Display the code prominently
+    click.echo()
+    click.secho("  Your code:  ", fg=Style.DIM, nl=False)
+    click.secho(user_code, fg=Style.INFO, bold=True)
+    click.echo()
+
+    webbrowser.open(verification_url)
+
+    dim("Browser opened. If not, visit:")
+    hint(verification_url)
+    click.echo()
+    dim("No account? Sign up from the browser.")
+    click.echo()
+    divider()
+    click.echo()
+
+    # Poll for token with spinner
+    spinner = Spinner("Waiting for authorization...")
+    spinner.start()
+
+    start_time = time.time()
+    max_wait = expires_in
+
+    while time.time() - start_time < max_wait:
+        time.sleep(interval)
+        elapsed = int(time.time() - start_time)
+        spinner.update(f"Waiting for authorization... ({elapsed}s)")
 
         try:
             import requests
-            response = requests.post(
+            poll_response = requests.get(
                 f"{base_endpoint}/api/auth/device",
-                headers={"Content-Type": "application/json"},
+                params={"device_code": device_code},
                 timeout=10,
             )
 
-            if response.status_code != 200:
-                spinner.stop(f"Failed to start pairing: {response.text}", success_status=False)
-                sys.exit(1)
+            if poll_response.status_code == 200:
+                token_data = poll_response.json()
+                api_key = token_data.get("api_key")
 
-            data = response.json()
-            device_code = data["device_code"]
-            user_code = data["user_code"]
-            verification_url = data["verification_uri_complete"]
-            interval = data.get("interval", 5)
-            expires_in = data.get("expires_in", 900)
+                if api_key:
+                    config = load_config()
+                    config["api_key"] = api_key
+                    save_config(config)
 
-            spinner.stop()
+                    spinner.stop("Logged in successfully!", success_status=True)
+                    click.echo()
+                    hint("Start the agent with: plexus start --slug <your-device-slug>")
+                    click.echo()
+                    return
 
-        except Exception as e:
-            spinner.stop(f"Error: {e}", success_status=False)
-            sys.exit(1)
-
-        # Display the code prominently
-        click.echo()
-        click.secho("  Your code:  ", fg=Style.DIM, nl=False)
-        click.secho(user_code, fg=Style.INFO, bold=True)
-        click.echo()
-
-        webbrowser.open(verification_url)
-
-        dim("Browser opened. If not, visit:")
-        hint(verification_url)
-        click.echo()
-        dim("No account? Sign up from the browser.")
-        click.echo()
-        divider()
-        click.echo()
-
-        # Poll for token with spinner
-        spinner = Spinner("Waiting for authorization...")
-        spinner.start()
-
-        start_time = time.time()
-        max_wait = expires_in
-
-        while time.time() - start_time < max_wait:
-            time.sleep(interval)
-            elapsed = int(time.time() - start_time)
-            spinner.update(f"Waiting for authorization... ({elapsed}s)")
-
-            try:
-                import requests
-                poll_response = requests.get(
-                    f"{base_endpoint}/api/auth/device",
-                    params={"device_code": device_code},
-                    timeout=10,
-                )
-
-                if poll_response.status_code == 200:
-                    token_data = poll_response.json()
-                    api_key = token_data.get("api_key")
-
-                    if api_key:
-                        config = load_config()
-                        config["api_key"] = api_key
-
-                        if not config.get("source_id"):
-                            import uuid
-                            config["source_id"] = f"source-{uuid.uuid4().hex[:8]}"
-
-                        save_config(config)
-
-                        spinner.stop("Paired successfully!", success_status=True)
-                        click.echo()
-                        hint("Start the agent with: plexus run")
-                        click.echo()
-                        return
-
-                elif poll_response.status_code == 202:
-                    continue
-
-                elif poll_response.status_code == 403:
-                    spinner.stop("Authorization was denied", success_status=False)
-                    sys.exit(1)
-
-                elif poll_response.status_code == 400:
-                    err = poll_response.json().get("error", "")
-                    if err == "expired_token":
-                        spinner.stop("Authorization expired", success_status=False)
-                        click.echo()
-                        hint("Try again: plexus pair")
-                        click.echo()
-                        sys.exit(1)
-
-            except Exception:
+            elif poll_response.status_code == 202:
                 continue
 
-        spinner.stop("Timed out waiting for authorization", success_status=False)
-        click.echo()
-        hint("Try again: plexus pair")
-        click.echo()
-        sys.exit(1)
+            elif poll_response.status_code == 403:
+                spinner.stop("Authorization was denied", success_status=False)
+                sys.exit(1)
+
+            elif poll_response.status_code == 400:
+                err = poll_response.json().get("error", "")
+                if err == "expired_token":
+                    spinner.stop("Authorization expired", success_status=False)
+                    click.echo()
+                    hint("Try again: plexus login")
+                    click.echo()
+                    sys.exit(1)
+
+        except Exception:
+            continue
+
+    spinner.stop("Timed out waiting for authorization", success_status=False)
+    click.echo()
+    hint("Try again: plexus login")
+    click.echo()
+    sys.exit(1)
 
 
 @main.command()
@@ -1030,7 +1015,7 @@ def status():
         except AuthenticationError:
             spinner.stop("Auth failed", success_status=False)
             click.echo()
-            hint("Re-pair with: plexus pair")
+            hint("Re-authenticate: plexus login")
             click.echo()
         except PlexusError:
             spinner.stop("Connection failed", success_status=False)
@@ -1043,7 +1028,7 @@ def status():
         click.echo()
         warning("Not paired yet")
         click.echo()
-        hint("Run 'plexus pair' to connect this device")
+        hint("Run 'plexus login' to connect this device")
         click.echo()
 
 
@@ -1470,7 +1455,7 @@ def doctor():
         _pass(f"API key: {masked}")
     else:
         _fail("No credentials configured")
-        dim("    Run: plexus pair --key YOUR_API_KEY")
+        dim("    Run: plexus start --key YOUR_API_KEY")
 
     endpoint_val = get_endpoint()
     _pass(f"Endpoint: {endpoint_val}")
@@ -1531,7 +1516,7 @@ def doctor():
                 _pass("Authentication: valid")
             elif resp.status_code == 401:
                 _fail("Authentication: invalid key")
-                dim("    Re-pair: plexus pair --key YOUR_API_KEY")
+                dim("    Re-authenticate: plexus start --key YOUR_API_KEY")
             elif resp.status_code == 403:
                 _fail("Authentication: key lacks write permission")
             else:

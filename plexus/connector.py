@@ -77,7 +77,7 @@ class PlexusConnector:
         self.api_key = api_key or get_api_key()
         self.endpoint = (endpoint or get_endpoint()).rstrip("/")
         self.source_id = source_id or get_source_id()
-        self.org_id = org_id or get_org_id() or "default"
+        self.org_id = org_id or get_org_id() or self._resolve_org_id() or "default"
         self.on_status = on_status or (lambda x: None)
         self.sensor_hub = sensor_hub
         self.camera_hub = camera_hub
@@ -111,6 +111,37 @@ class PlexusConnector:
             on_status=self.on_status,
             persist_fn=self._persist_async,
         )
+
+    # =========================================================================
+    # Org ID Resolution
+    # =========================================================================
+
+    def _resolve_org_id(self) -> Optional[str]:
+        """Resolve org_id from the API key via the verify-key endpoint.
+
+        Caches the result in config so subsequent runs don't need the request.
+        """
+        if not self.api_key:
+            return None
+        try:
+            import requests
+            resp = requests.get(
+                f"{self.endpoint}/api/auth/verify-key",
+                headers={"x-api-key": self.api_key},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                org_id = resp.json().get("org_id")
+                if org_id:
+                    # Cache in config for future runs
+                    from plexus.config import load_config, save_config
+                    config = load_config()
+                    config["org_id"] = org_id
+                    save_config(config)
+                    return org_id
+        except Exception:
+            pass
+        return None
 
     # =========================================================================
     # Connection URLs

@@ -8,6 +8,8 @@ Built-in adapters:
     - MQTTAdapter: Bridge MQTT brokers to Plexus
     - CANAdapter: CAN bus with DBC signal decoding
     - MAVLinkAdapter: MAVLink for drones and autonomous vehicles
+    - OPCUAAdapter: OPC-UA client for industrial automation servers
+    - SerialAdapter: Serial port (USB/UART/RS-232/RS-485) reader
 
 Usage:
     from plexus.adapters import MQTTAdapter, CANAdapter, MAVLinkAdapter, AdapterRegistry
@@ -63,6 +65,14 @@ except ImportError:
     CANAdapter = None  # type: ignore
     _HAS_CAN = False
 
+# Import ModbusAdapter (requires optional [modbus] extra)
+try:
+    from plexus.adapters.modbus import ModbusAdapter
+    _HAS_MODBUS = True
+except ImportError:
+    ModbusAdapter = None  # type: ignore
+    _HAS_MODBUS = False
+
 # Import MAVLinkAdapter (requires optional [mavlink] extra)
 try:
     from plexus.adapters.mavlink import MAVLinkAdapter
@@ -70,6 +80,22 @@ try:
 except ImportError:
     MAVLinkAdapter = None  # type: ignore
     _HAS_MAVLINK = False
+
+# Import OPCUAAdapter (requires optional [opcua] extra)
+try:
+    from plexus.adapters.opcua import OPCUAAdapter
+    _HAS_OPCUA = True
+except ImportError:
+    OPCUAAdapter = None  # type: ignore
+    _HAS_OPCUA = False
+
+# Import SerialAdapter (requires optional [serial] extra)
+try:
+    from plexus.adapters.serial_adapter import SerialAdapter
+    _HAS_SERIAL = True
+except ImportError:
+    SerialAdapter = None  # type: ignore
+    _HAS_SERIAL = False
 
 __all__ = [
     "ProtocolAdapter",
@@ -80,5 +106,8 @@ __all__ = [
     "AdapterRegistry",
     "MQTTAdapter",
     "CANAdapter",
+    "ModbusAdapter",
     "MAVLinkAdapter",
+    "OPCUAAdapter",
+    "SerialAdapter",
 ]

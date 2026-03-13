@@ -123,7 +123,10 @@ class MQTTAdapter(ProtocolAdapter):
             # Create client
             if hasattr(mqtt, 'CallbackAPIVersion'):
                 # paho-mqtt 2.0+
-                self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+                self._client = mqtt.Client(
+                    mqtt.CallbackAPIVersion.VERSION2,
+                    client_id=self.client_id,
+                )
             else:
                 # paho-mqtt 1.x
                 self._client = mqtt.Client(client_id=self.client_id)
@@ -186,28 +189,27 @@ class MQTTAdapter(ProtocolAdapter):
 
     def _on_connect(self, client, userdata, flags, rc, properties=None):
         """Handle MQTT connection."""
-        if rc == 0:
+        # paho-mqtt 2.0+ uses ReasonCode objects; 1.x uses ints
+        is_success = (
+            not rc.is_failure if hasattr(rc, 'is_failure') else rc == 0
+        )
+        if is_success:
             self._set_state(AdapterState.CONNECTED)
             client.subscribe(self.topic, qos=self.qos)
+            logger.info(f"Connected to MQTT broker, subscribed to '{self.topic}'")
         else:
-            error_messages = {
-                1: "Incorrect protocol version",
-                2: "Invalid client identifier",
-                3: "Server unavailable",
-                4: "Bad username or password",
-                5: "Not authorized",
-            }
-            error = error_messages.get(rc, f"Unknown error: {rc}")
-            self._set_state(AdapterState.ERROR, error)
+            self._set_state(AdapterState.ERROR, f"Connection refused: {rc}")
 
     def _on_disconnect(self, client, userdata, rc, properties=None):
         """Handle MQTT disconnection."""
         if rc != 0:
+            logger.warning(f"Unexpected MQTT disconnect (rc={rc}), attempting reconnect...")
             self._set_state(
                 AdapterState.RECONNECTING,
                 f"Unexpected disconnect: {rc}"
             )
         else:
+            logger.info("MQTT disconnected cleanly")
             self._set_state(AdapterState.DISCONNECTED)
 
     def _on_message(self, client, userdata, msg):
@@ -217,7 +219,6 @@ class MQTTAdapter(ProtocolAdapter):
             if metrics:
                 self._pending_metrics.extend(metrics)
                 self._emit_data(metrics)
-                self.on_data(metrics)
         except Exception as e:
             logger.warning(f"Failed to parse MQTT message: {e}")
 

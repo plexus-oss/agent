@@ -122,8 +122,8 @@ See [API.md](API.md) for curl, JavaScript, Go, and Bash examples.
 
 ## Authentication
 
-| Method            | How to get it                                           | Used by                            |
-| ----------------- | ------------------------------------------------------- | ---------------------------------- |
+| Method            | How to get it                                             | Used by                            |
+| ----------------- | --------------------------------------------------------- | ---------------------------------- |
 | API key (`plx_*`) | Dashboard → Devices → Add Device, or Settings → Developer | `plexus run` and `Plexus()` client |
 
 Two ways to pair:
