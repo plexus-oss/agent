@@ -195,15 +195,18 @@ class SystemSensor(BaseSensor):
         try:
             with open("/sys/class/thermal/thermal_zone0/temp") as f:
                 readings.append(SensorReading("sys.cpu_temp", round(int(f.read().strip()) / 1000.0, 1), now))
-        except Exception: pass
+        except Exception:
+            pass
         try:
             import psutil
             readings.append(SensorReading("sys.mem_used_pct", round(psutil.virtual_memory().percent, 1), now))
-        except ImportError: pass
+        except ImportError:
+            pass
         try:
             with open("/proc/uptime") as f:
                 readings.append(SensorReading("sys.uptime", round(float(f.read().split()[0]), 0), now))
-        except Exception: pass
+        except Exception:
+            pass
         return readings
 
 
@@ -254,9 +257,11 @@ def identify():
         led_path = "/sys/class/leds/ACT/brightness"
         if os.path.exists(led_path):
             for _ in range(5):
-                with open(led_path, "w") as f: f.write("1")
+                with open(led_path, "w") as f:
+                    f.write("1")
                 time.sleep(0.15)
-                with open(led_path, "w") as f: f.write("0")
+                with open(led_path, "w") as f:
+                    f.write("0")
                 time.sleep(0.15)
     except Exception:
         pass
@@ -286,8 +291,10 @@ def run_diagnostic(subsystem):
             latency = None
             for line in result.stdout.decode().split("\n"):
                 if "time=" in line:
-                    try: latency = float(line.split("time=")[1].split(" ")[0])
-                    except: pass
+                    try:
+                        latency = float(line.split("time=")[1].split(" ")[0])
+                    except Exception:
+                        pass
             results["comms"] = {"status": "ok" if result.returncode == 0 else "degraded", "latency_ms": latency}
         except Exception:
             results["comms"] = {"status": "unknown"}
@@ -327,12 +334,12 @@ if __name__ == "__main__":
     print(f"  Servo: {'yes' if servo_ok else 'no'}")
     print(f"  Mode:  {state['mode']} ({state['sample_rate_hz']} Hz)")
     print(f"{'=' * 50}")
-    print(f"\n  Commands: set_mode, rotate_servo, set_sample_rate,")
-    print(f"           identify, run_diagnostic")
-    print(f"\n  Suggested alerts:")
-    print(f"    imu.accel.magnitude > 1.5  (warning — tilted)")
-    print(f"    imu.accel.magnitude > 3.0  (critical — shaken)")
-    print(f"\n  Hand this Pi to people. Let them tilt it.\n")
+    print("\n  Commands: set_mode, rotate_servo, set_sample_rate,")
+    print("           identify, run_diagnostic")
+    print("\n  Suggested alerts:")
+    print("    imu.accel.magnitude > 1.5  (warning — tilted)")
+    print("    imu.accel.magnitude > 3.0  (critical — shaken)")
+    print("\n  Hand this Pi to people. Let them tilt it.\n")
 
     try:
         run_connector(
