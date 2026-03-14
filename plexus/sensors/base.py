@@ -5,6 +5,7 @@ All sensor drivers inherit from BaseSensor and implement the read() method.
 """
 
 import logging
+import sys
 import time
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -257,7 +258,10 @@ class SensorHub:
                     sensor._error = str(e)
                     self._handle_sensor_failure(sensor)
         finally:
-            pool.shutdown(wait=False, cancel_futures=True)
+            if sys.version_info >= (3, 9):
+                pool.shutdown(wait=False, cancel_futures=True)
+            else:
+                pool.shutdown(wait=False)
 
         return readings
 
@@ -348,7 +352,10 @@ class SensorHub:
                                     self._handle_sensor_failure(sensor)
                                     last_read[id(sensor)] = now
                         finally:
-                            pool.shutdown(wait=False, cancel_futures=True)
+                            if sys.version_info >= (3, 9):
+                                pool.shutdown(wait=False, cancel_futures=True)
+                            else:
+                                pool.shutdown(wait=False)
 
                     # Sleep to maintain timing
                     elapsed = time.time() - loop_start
