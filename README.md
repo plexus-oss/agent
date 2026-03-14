@@ -118,7 +118,7 @@ px.send_batch([
 ])
 ```
 
-See [API.md](API.md) for curl, JavaScript, Go, and Bash examples.
+See [API.md](https://github.com/plexus-oss/agent/blob/main/API.md) for curl, JavaScript, Go, and Bash examples.
 
 ## Authentication
 
@@ -253,7 +253,7 @@ Commands are sent to the device over WebSocket and executed in real time. The da
 - Execution status and results
 - Command history
 
-This works the same way in the C SDK — see the [C SDK README](../c-sdk/README.md#typed-commands) for the equivalent API.
+This works the same way in the C SDK — see the [C SDK README](https://github.com/plexus-oss/c-sdk) for the equivalent API.
 
 ## Sessions
 
@@ -443,7 +443,7 @@ When recording a session, both paths are used — WebSocket for live view, HTTP 
 
 ## API Reference
 
-See [API.md](API.md) for the full HTTP and WebSocket protocol specification, including:
+See [API.md](https://github.com/plexus-oss/agent/blob/main/API.md) for the full HTTP and WebSocket protocol specification, including:
 
 - Request/response formats
 - All message types

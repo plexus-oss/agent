@@ -45,8 +45,6 @@ Set up your device with one command. Use an API key for fleet provisioning, or a
 # With API key (fleet provisioning — get from Settings → Developer)
 curl -sL https://app.plexus.company/setup | bash -s -- --key plx_your_api_key
 
-# With pairing code (single device — get from app.plexus.company/devices)
-curl -sL https://app.plexus.company/setup | bash -s -- --code ABC123
 ```
 
 Then control streaming, recording, and configuration from [app.plexus.company/devices](https://app.plexus.company/devices).
@@ -73,9 +71,9 @@ curl -X POST https://app.plexus.company/api/ingest \
 
 Plexus uses API keys for all authentication:
 
-| Type    | Prefix | Use Case                                       |
-| ------- | ------ | ---------------------------------------------- |
-| API Key | `plx_` | HTTP access and WebSocket device connections   |
+| Type    | Prefix | Use Case                                     |
+| ------- | ------ | -------------------------------------------- |
+| API Key | `plx_` | HTTP access and WebSocket device connections |
 
 ### Getting an API Key
 
@@ -505,7 +503,6 @@ For Raspberry Pi and other Linux devices, the Python SDK includes sensor drivers
 
 ```bash
 pip install plexus-agent[sensors]
-plexus pair --code YOUR_CODE
 plexus run
 ```
 

@@ -4,7 +4,6 @@
 #
 # Usage:
 #   curl -sL https://app.plexus.company/setup | bash -s -- --key plx_abc123
-#   curl -sL https://app.plexus.company/setup | bash -s -- --code ABC123
 #
 # This script:
 #   1. Installs Python if missing
