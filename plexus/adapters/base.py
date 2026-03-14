@@ -31,7 +31,7 @@ Example custom adapter:
             if self._serial:
                 self._serial.close()
 
-        def poll(self) -> list[Metric]:
+        def poll(self) -> "List[Metric]":
             line = self._serial.readline().decode().strip()
             # Parse your protocol format
             metric, value = line.split(":")

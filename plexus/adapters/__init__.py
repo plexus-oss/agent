@@ -39,7 +39,7 @@ Usage:
             # Connect to your protocol
             return True
 
-        def poll(self) -> list[Metric]:
+        def poll(self) -> "List[Metric]":
             # Read data and return metrics
             return [Metric("sensor.temp", 72.5)]
 

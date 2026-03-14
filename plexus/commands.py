@@ -20,7 +20,7 @@ import logging
 import os
 import shlex
 import subprocess
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class CommandExecutor:
         self.on_status = on_status or (lambda x: None)
         self._current_process: Optional[subprocess.Popen] = None
 
-    def is_command_allowed(self, command: str) -> tuple[bool, str]:
+    def is_command_allowed(self, command: str) -> Tuple[bool, str]:
         """Check if a command is allowed by the allowlist/denylist policy.
 
         Returns (allowed, reason) tuple.

@@ -101,7 +101,7 @@ class SystemInfo:
 # Existing Detection Functions
 # ─────────────────────────────────────────────────────────────────────────────
 
-def detect_sensors(bus: int = 1) -> tuple[Optional["SensorHub"], list]:
+def detect_sensors(bus: int = 1) -> Tuple[Optional["SensorHub"], List]:
     """Detect I2C sensors and create a SensorHub.
 
     Returns:
@@ -121,7 +121,7 @@ def detect_sensors(bus: int = 1) -> tuple[Optional["SensorHub"], list]:
         return None, []
 
 
-def detect_cameras() -> tuple[Optional["CameraHub"], list]:
+def detect_cameras() -> Tuple[Optional["CameraHub"], List]:
     """Detect connected cameras and create a CameraHub.
 
     Returns:
@@ -141,7 +141,7 @@ def detect_cameras() -> tuple[Optional["CameraHub"], list]:
         return None, []
 
 
-def detect_can() -> tuple[Optional[list["DetectedCAN"]], list["DetectedCAN"], list["DetectedCAN"]]:
+def detect_can() -> Tuple[Optional[List["DetectedCAN"]], List["DetectedCAN"], List["DetectedCAN"]]:
     """Detect CAN interfaces.
 
     Returns:
@@ -159,7 +159,7 @@ def detect_can() -> tuple[Optional[list["DetectedCAN"]], list["DetectedCAN"], li
         return None, [], []
 
 
-def detect_mavlink() -> list["DetectedMAVLink"]:
+def detect_mavlink() -> List["DetectedMAVLink"]:
     """Detect MAVLink connections (UDP, TCP, serial).
 
     Returns:

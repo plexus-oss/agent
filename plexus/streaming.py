@@ -47,12 +47,12 @@ class StreamManager:
         self.on_status = on_status or (lambda x: None)
         self.persist_fn = persist_fn
 
-        self._active_streams: dict[str, asyncio.Task] = {}
-        self._active_camera_streams: dict[str, asyncio.Task] = {}
-        self._active_can_streams: dict[str, asyncio.Task] = {}
-        self._can_instances: dict[str, Any] = {}  # channel -> CANAdapter
-        self._active_mavlink_streams: dict[str, asyncio.Task] = {}
-        self._mavlink_instances: dict[str, Any] = {}  # conn_string -> MAVLinkAdapter
+        self._active_streams: Dict[str, asyncio.Task] = {}
+        self._active_camera_streams: Dict[str, asyncio.Task] = {}
+        self._active_can_streams: Dict[str, asyncio.Task] = {}
+        self._can_instances: Dict[str, Any] = {}  # channel -> CANAdapter
+        self._active_mavlink_streams: Dict[str, asyncio.Task] = {}
+        self._mavlink_instances: Dict[str, Any] = {}  # conn_string -> MAVLinkAdapter
         self._recording: bool = False
 
     # =========================================================================
