@@ -30,7 +30,7 @@ Usage:
             px.send("temperature", read_temp())
             time.sleep(0.01)
 
-Note: Requires authentication. Run 'plexus pair' or set PLEXUS_API_KEY.
+Note: Requires authentication. Run 'plexus login' or set PLEXUS_API_KEY.
 """
 
 import logging
@@ -261,7 +261,7 @@ class Plexus:
         """
         if not self.api_key:
             raise AuthenticationError(
-                "No API key configured. Run 'plexus pair' or set PLEXUS_API_KEY"
+                "No API key configured. Run 'plexus login' or set PLEXUS_API_KEY"
             )
 
         # Include any previously buffered points

@@ -4,7 +4,7 @@ Command-line interface for Plexus Agent.
 Simplified CLI - all device control happens through the web UI.
 
 Usage:
-    plexus run                     # Start the agent
+    plexus start                   # Set up and stream
     plexus login                   # Sign in with web dashboard
     plexus status                  # Check connection status
     plexus scan                    # List detected sensors
@@ -199,8 +199,7 @@ def main():
     Or step by step:
 
         plexus login                   # Sign in (one-time)
-        plexus start --key plx_xxx     # Or use an API key directly
-        plexus run                     # Start the agent
+        plexus start                   # Detect and stream
 
     Add capabilities:
 
@@ -219,25 +218,44 @@ def main():
 @main.command()
 @click.option("--key", "-k", help="API key from dashboard")
 @click.option("--name", "-n", help="Device name for identification")
-@click.option("--slug", "-s", help="Device slug (source ID) from dashboard")
+@click.option("--slug", help="Device slug (source ID) from dashboard")
 @click.option("--org", help="Organization ID from dashboard")
 @click.option("--bus", "-b", default=1, type=int, help="I2C bus number for sensors")
-def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Optional[str], bus: int):
+@click.option("--no-sensors", is_flag=True, help="Disable sensor auto-detection")
+@click.option("--no-cameras", is_flag=True, help="Disable camera auto-detection")
+@click.option("--sensor", "-s", "sensor_types", multiple=True, help="Sensor type to use (e.g. system). Repeatable.")
+@click.option("--mqtt", "mqtt_broker", default=None, help="MQTT broker to bridge (e.g. localhost:1883)")
+@click.option("--mqtt-topic", default="sensors/#", help="MQTT topic to subscribe to")
+@click.option("--auto-install", is_flag=True, help="Auto-install missing dependencies")
+@click.option("--live", is_flag=True, help="Show live terminal dashboard with real-time metrics")
+def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Optional[str], bus: int, no_sensors: bool, no_cameras: bool, sensor_types: tuple, mqtt_broker: Optional[str], mqtt_topic: str, auto_install: bool, live: bool):
     """
     Set up and start streaming in one command.
 
     Handles auth, hardware detection, dependency installation, and sensor
-    selection interactively. The fastest path from install to streaming.
+    selection. Interactive when run without flags, non-interactive with flags.
 
     Examples:
 
         plexus start                                        # Interactive setup
         plexus start --key plx_xxx                          # Non-interactive auth
         plexus start --key plx_xxx --slug my-drone --org org_123  # Full setup
-        plexus start --key plx_xxx -b 0                     # Specify I2C bus
+        plexus start --sensor system                        # System health metrics
+        plexus start --no-sensors --no-cameras              # Skip hardware detection
+        plexus start --mqtt localhost:1883                   # Bridge MQTT data
+        plexus start --live                                  # Live terminal dashboard
     """
     from plexus.connector import run_connector
     from plexus.detect import detect_sensors, detect_cameras, detect_can
+
+    # Enable auto-install if requested
+    if auto_install:
+        from plexus.deps import enable_auto_install
+        enable_auto_install()
+
+    # Determine if we should run in non-interactive mode:
+    # skip sensor selection prompt when explicit flags are used
+    non_interactive = bool(no_sensors or no_cameras or sensor_types or mqtt_broker)
 
     # ── Welcome ───────────────────────────────────────────────────────────
     header(f"Plexus Agent v{__version__}")
@@ -306,21 +324,30 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
     sensor_hub = None
     sensors = []
     i2c_error = None
-    try:
-        sensor_hub, sensors = detect_sensors(bus)
-    except PermissionError:
-        i2c_error = "I2C permission denied (run: sudo usermod -aG i2c $USER)"
-    except ImportError:
-        from plexus.deps import prompt_install
-        if prompt_install("smbus2", extra="sensors"):
-            try:
-                sensor_hub, sensors = detect_sensors(bus)
-            except Exception as e:
-                i2c_error = str(e)
-        else:
-            i2c_error = None  # User declined, not an error — just skip
-    except Exception as e:
-        i2c_error = str(e)
+
+    if sensor_types:
+        # Named sensor types (e.g. --sensor system)
+        from plexus.detect import detect_named_sensors
+        try:
+            sensor_hub, sensors = detect_named_sensors(list(sensor_types))
+        except ValueError as e:
+            i2c_error = str(e)
+    elif not no_sensors:
+        try:
+            sensor_hub, sensors = detect_sensors(bus)
+        except PermissionError:
+            i2c_error = "I2C permission denied (run: sudo usermod -aG i2c $USER)"
+        except ImportError:
+            from plexus.deps import prompt_install
+            if prompt_install("smbus2", extra="sensors"):
+                try:
+                    sensor_hub, sensors = detect_sensors(bus)
+                except Exception as e:
+                    i2c_error = str(e)
+            else:
+                i2c_error = None  # User declined, not an error — just skip
+        except Exception as e:
+            i2c_error = str(e)
 
     if i2c_error:
         warning(i2c_error)
@@ -328,18 +355,56 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
     # Cameras
     camera_hub = None
     cameras = []
-    try:
-        camera_hub, cameras = detect_cameras()
-    except ImportError:
-        logger.debug("Camera support not installed (opencv-python missing)")
-    except Exception as e:
-        click.echo(click.style(f"  {Style.CROSS} Camera detection failed: {e}", fg=Style.WARNING))
+    if not no_cameras:
+        try:
+            camera_hub, cameras = detect_cameras()
+        except ImportError:
+            if non_interactive:
+                from plexus.deps import prompt_install
+                if prompt_install("cv2", extra="camera"):
+                    try:
+                        camera_hub, cameras = detect_cameras()
+                    except Exception as e:
+                        logger.debug("Camera detection failed after install: %s", e)
+                        cameras = []
+                else:
+                    cameras = []
+            else:
+                logger.debug("Camera support not installed (opencv-python missing)")
+        except Exception as e:
+            click.echo(click.style(f"  {Style.CROSS} Camera detection failed: {e}", fg=Style.WARNING))
 
     # CAN
     can_adapters, up_can, down_can = detect_can()
 
-    # ── Sensor selection ──────────────────────────────────────────────────
-    if sensors:
+    # MQTT
+    mqtt_adapter = None
+    mqtt_error = None
+    if mqtt_broker:
+        try:
+            from plexus.adapters.mqtt import MQTTAdapter
+            parts = mqtt_broker.split(":")
+            broker_host = parts[0]
+            broker_port = int(parts[1]) if len(parts) > 1 else 1883
+            mqtt_adapter = MQTTAdapter(broker=broker_host, port=broker_port, topic=mqtt_topic)
+        except ImportError:
+            from plexus.deps import prompt_install
+            if prompt_install("paho", extra="mqtt"):
+                try:
+                    from plexus.adapters.mqtt import MQTTAdapter
+                    parts = mqtt_broker.split(":")
+                    broker_host = parts[0]
+                    broker_port = int(parts[1]) if len(parts) > 1 else 1883
+                    mqtt_adapter = MQTTAdapter(broker=broker_host, port=broker_port, topic=mqtt_topic)
+                except Exception as e:
+                    mqtt_error = f"MQTT setup failed: {e}"
+            else:
+                mqtt_error = "paho-mqtt not installed (run: pip install plexus-agent[mqtt])"
+        except Exception as e:
+            mqtt_error = f"MQTT setup failed: {e}"
+
+    # ── Sensor selection (interactive only) ────────────────────────────────
+    if sensors and not non_interactive:
         click.echo(f"  Found {len(sensors)} sensor{'s' if len(sensors) != 1 else ''} on I2C bus {bus}:")
         click.echo()
 
@@ -392,6 +457,10 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
         info(f"Cameras: {len(cameras)} detected")
     if up_can:
         info(f"CAN: {len(up_can)} active interface{'s' if len(up_can) != 1 else ''}")
+    if mqtt_adapter:
+        info(f"MQTT: {mqtt_broker} ({mqtt_topic})")
+    elif mqtt_error:
+        warning(mqtt_error)
 
     click.echo()
 
@@ -402,6 +471,10 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
         config["source_name"] = name
         save_config(config)
 
+    if i2c_error and sensor_types:
+        error(i2c_error)
+        sys.exit(1)
+
     stream_label = f"Streaming {metric_count} metrics" if metric_count else "Connected"
     click.secho(f"  {Style.CHECK} {stream_label}", fg=Style.SUCCESS)
 
@@ -410,20 +483,73 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
     hint(f"View live: app.plexus.company/devices/{source_display}")
     click.echo()
 
+    # ── Start MQTT bridge in background if configured ─────────────────────
+    mqtt_thread = None
+    if mqtt_adapter:
+        px = Plexus(api_key=api_key, endpoint=endpoint)
+
+        def _mqtt_forwarder(metrics):
+            for m in metrics:
+                try:
+                    px.send(m.name, m.value, tags=m.tags or {})
+                except Exception as e:
+                    logger.warning(f"MQTT forward failed: {e}")
+
+        mqtt_adapter._on_data_callback = _mqtt_forwarder
+        try:
+            mqtt_adapter.connect()
+            mqtt_thread = threading.Thread(target=mqtt_adapter._run_loop, daemon=True)
+            mqtt_thread.start()
+            status_line(f"MQTT bridge active: {mqtt_broker}")
+        except Exception as e:
+            warning(f"MQTT connect failed: {e}")
+
     # ── Start connector ───────────────────────────────────────────────────
-    try:
-        run_connector(
-            api_key=api_key,
-            endpoint=endpoint,
-            on_status=status_line,
-            sensor_hub=sensor_hub,
-            camera_hub=camera_hub,
-            can_adapters=can_adapters,
-        )
-    except KeyboardInterrupt:
-        click.echo()
-        status_line("Disconnected")
-        click.echo()
+    if live:
+        # Live TUI mode
+        try:
+            from plexus.tui import LiveDashboard
+            dashboard = LiveDashboard()
+
+            def _connector_fn():
+                run_connector(
+                    api_key=api_key,
+                    endpoint=endpoint,
+                    on_status=dashboard.wrap_status_callback(status_line),
+                    sensor_hub=sensor_hub,
+                    camera_hub=camera_hub,
+                    can_adapters=can_adapters,
+                )
+
+            dashboard.run(_connector_fn)
+        except ImportError as e:
+            warning(str(e).strip())
+            hint("Install with: pip install plexus-agent[tui]")
+            click.echo()
+            sys.exit(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if mqtt_adapter:
+                mqtt_adapter.disconnect()
+    else:
+        # Standard mode
+        try:
+            run_connector(
+                api_key=api_key,
+                endpoint=endpoint,
+                on_status=status_line,
+                sensor_hub=sensor_hub,
+                camera_hub=camera_hub,
+                can_adapters=can_adapters,
+            )
+        except KeyboardInterrupt:
+            click.echo()
+            status_line("Disconnected")
+            click.echo()
+        finally:
+            if mqtt_adapter:
+                mqtt_adapter.disconnect()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -529,321 +655,6 @@ def add(capabilities: tuple):
             spinner.stop(f"{extra_name}: {e}", success_status=False)
 
     click.echo()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# plexus run
-# ─────────────────────────────────────────────────────────────────────────────
-
-@main.command()
-@click.option("--name", "-n", help="Device name for identification")
-@click.option("--no-sensors", is_flag=True, help="Disable sensor auto-detection")
-@click.option("--no-cameras", is_flag=True, help="Disable camera auto-detection")
-@click.option("--bus", "-b", default=1, type=int, help="I2C bus number for sensors")
-@click.option("--sensor", "-s", "sensor_types", multiple=True, help="Sensor type to use (system). Repeatable.")
-@click.option("--mqtt", "mqtt_broker", default=None, help="MQTT broker to bridge (e.g. localhost:1883)")
-@click.option("--mqtt-topic", default="sensors/#", help="MQTT topic to subscribe to")
-@click.option("--auto-install", is_flag=True, help="Auto-install missing dependencies")
-@click.option("--live", is_flag=True, help="Show live terminal dashboard with real-time metrics")
-def run(name: Optional[str], no_sensors: bool, no_cameras: bool, bus: int, sensor_types: tuple, mqtt_broker: Optional[str], mqtt_topic: str, auto_install: bool, live: bool):
-    """
-    Start the Plexus agent.
-
-    Connects to Plexus and waits for commands from the web dashboard.
-    All device control (streaming, sessions, commands) happens through the UI.
-
-    Press Ctrl+C to stop.
-
-    Examples:
-
-        plexus run                                  # Start the agent
-        plexus run --name "robot-01"                # With custom name
-        plexus run --sensor system                  # System health metrics
-        plexus run --no-sensors                     # Without sensor detection
-        plexus run --no-cameras                     # Without camera detection
-        plexus run --mqtt localhost:1883            # Bridge MQTT data
-    """
-    from plexus.connector import run_connector
-    from plexus.detect import detect_sensors, detect_cameras, detect_can
-
-    # Enable auto-install if requested
-    if auto_install:
-        from plexus.deps import enable_auto_install
-        enable_auto_install()
-
-    api_key = get_api_key()
-
-    if not api_key:
-        click.echo()
-        click.secho(f"  Plexus Agent v{__version__}", bold=True)
-        click.echo()
-        label("Auth", click.style("(missing)", fg=Style.ERROR) + " — run: plexus start --key <your-api-key>")
-        click.echo()
-        sys.exit(1)
-
-    endpoint = get_endpoint()
-    source_id = get_source_id()
-
-    # Update source name if provided
-    if name:
-        config = load_config()
-        config["source_name"] = name
-        save_config(config)
-
-    # ── Collect all startup info before printing ────────────────────────
-    # Validate API key
-    key_valid = _validate_api_key(api_key, endpoint)
-
-    # Detect hardware
-    sensor_hub = None
-    sensors = []
-    i2c_error = None
-    if sensor_types:
-        from plexus.detect import detect_named_sensors
-        try:
-            sensor_hub, sensors = detect_named_sensors(list(sensor_types))
-        except ValueError as e:
-            i2c_error = str(e)
-    elif not no_sensors:
-        try:
-            sensor_hub, sensors = detect_sensors(bus)
-        except PermissionError:
-            i2c_error = "permission denied (run: sudo usermod -aG i2c $USER)"
-        except ImportError:
-            from plexus.deps import prompt_install
-            if prompt_install("smbus2", extra="sensors"):
-                try:
-                    sensor_hub, sensors = detect_sensors(bus)
-                except Exception as e:
-                    i2c_error = str(e)
-            else:
-                i2c_error = "smbus2 not installed (run: pip install plexus-agent[sensors])"
-        except Exception as e:
-            i2c_error = str(e)
-
-    camera_hub = None
-    cameras = []
-    if not no_cameras:
-        try:
-            camera_hub, cameras = detect_cameras()
-        except ImportError:
-            from plexus.deps import prompt_install
-            if prompt_install("cv2", extra="camera"):
-                try:
-                    camera_hub, cameras = detect_cameras()
-                except Exception as e:
-                    logger.debug("Camera detection failed after install: %s", e)
-                    cameras = []
-            else:
-                cameras = []
-        except Exception as e:
-            click.echo(click.style(f"  {Style.CROSS} Camera detection failed: {e}", fg=Style.WARNING))
-            cameras = []
-
-    can_adapters, up_can, down_can = detect_can()
-
-    mqtt_adapter = None
-    mqtt_error = None
-    if mqtt_broker:
-        try:
-            from plexus.adapters.mqtt import MQTTAdapter
-            parts = mqtt_broker.split(":")
-            broker_host = parts[0]
-            broker_port = int(parts[1]) if len(parts) > 1 else 1883
-            mqtt_adapter = MQTTAdapter(broker=broker_host, port=broker_port, topic=mqtt_topic)
-        except ImportError:
-            from plexus.deps import prompt_install
-            if prompt_install("paho", extra="mqtt"):
-                try:
-                    from plexus.adapters.mqtt import MQTTAdapter
-                    parts = mqtt_broker.split(":")
-                    broker_host = parts[0]
-                    broker_port = int(parts[1]) if len(parts) > 1 else 1883
-                    mqtt_adapter = MQTTAdapter(broker=broker_host, port=broker_port, topic=mqtt_topic)
-                except Exception as e:
-                    mqtt_error = f"MQTT setup failed: {e}"
-            else:
-                mqtt_error = "paho-mqtt not installed (run: pip install plexus-agent[mqtt])"
-        except Exception as e:
-            mqtt_error = f"MQTT setup failed: {e}"
-
-    # Count total metrics
-    metric_count = 0
-    for s in sensors:
-        metric_count += len(s.metrics) if hasattr(s, "metrics") else 1
-
-    # ── Print formatted startup block ───────────────────────────────────
-    click.echo()
-    click.secho(f"  Plexus Agent v{__version__}", bold=True)
-    click.echo()
-
-    label("Config", str(get_config_path()))
-
-    # Auth line
-    masked = _mask_key(api_key)
-    if key_valid:
-        label("Auth", masked + " " + click.style(Style.CHECK, fg=Style.SUCCESS))
-    else:
-        label("Auth", masked + " " + click.style(f"{Style.CROSS} (401 unauthorized — key may be revoked)", fg=Style.ERROR))
-
-    label("Endpoint", endpoint)
-    label("Source", name or source_id)
-
-    click.echo()
-
-    # Hardware tree
-    click.echo("  Hardware")
-    has_hardware = bool(sensors) or i2c_error or bool(cameras) or bool(up_can) or bool(down_can)
-
-    if not has_hardware and not mqtt_adapter:
-        dim("  └─ (none detected)")
-    else:
-        # Determine tree connectors
-        hw_items = []
-        if sensors or i2c_error:
-            hw_items.append("i2c")
-        if cameras:
-            hw_items.append("cameras")
-        elif not no_cameras:
-            hw_items.append("cameras_none")
-        if up_can or down_can:
-            hw_items.append("can")
-        if mqtt_adapter or mqtt_error:
-            hw_items.append("mqtt")
-
-        for idx, item in enumerate(hw_items):
-            is_last = idx == len(hw_items) - 1
-            connector = "└─" if is_last else "├─"
-            sub_connector = "  " if is_last else "│ "
-
-            if item == "i2c":
-                if i2c_error:
-                    click.echo(f"  {connector} ", nl=False)
-                    click.secho(f"I2C Bus {bus} — {i2c_error}", fg=Style.ERROR)
-                elif sensors:
-                    click.echo(f"  {connector} I2C Bus {bus}")
-                    for si, s in enumerate(sensors):
-                        s_last = si == len(sensors) - 1
-                        s_conn = "└─" if s_last else "├─"
-                        addr_str = f"0x{s.address:02X}" if hasattr(s, "address") else ""
-                        metrics_str = ", ".join(s.metrics) if hasattr(s, "metrics") and s.metrics else ""
-                        name_str = s.name if hasattr(s, "name") else str(s)
-                        line = f"  {sub_connector} {s_conn} {addr_str} {name_str}"
-                        if metrics_str:
-                            line += f"    {metrics_str}"
-                        dim(line)
-
-            elif item == "cameras":
-                click.echo(f"  {connector} Cameras: {len(cameras)} detected")
-                for ci, c in enumerate(cameras):
-                    c_last = ci == len(cameras) - 1
-                    c_conn = "└─" if c_last else "├─"
-                    dim(f"  {sub_connector} {c_conn} {c.name}")
-
-            elif item == "cameras_none":
-                dim(f"  {connector} Cameras: none")
-
-            elif item == "can":
-                if up_can:
-                    click.echo(f"  {connector} CAN: {len(up_can)} active")
-                    for ci, c in enumerate(up_can):
-                        c_last = ci == len(up_can) - 1
-                        c_conn = "└─" if c_last else "├─"
-                        bitrate_str = f" ({c.bitrate} bps)" if c.bitrate else ""
-                        dim(f"  {sub_connector} {c_conn} {c.channel}{bitrate_str}")
-                elif down_can:
-                    click.echo(f"  {connector} ", nl=False)
-                    click.secho(f"CAN: {len(down_can)} found (not configured) — run: plexus scan --setup", fg=Style.WARNING)
-
-            elif item == "mqtt":
-                if mqtt_error:
-                    click.echo(f"  {connector} ", nl=False)
-                    click.secho(f"MQTT — {mqtt_error}", fg=Style.ERROR)
-                elif mqtt_adapter:
-                    click.echo(f"  {connector} MQTT: {mqtt_broker} ({mqtt_topic})")
-
-    click.echo()
-
-    if not key_valid:
-        error("Cannot connect — fix authentication above")
-        click.echo()
-        sys.exit(1)
-
-    if i2c_error and sensor_types:
-        error(i2c_error)
-        sys.exit(1)
-
-    # Show connected status
-    stream_label = f"Streaming {metric_count} metrics" if metric_count else "Connected"
-    click.secho(f"  {Style.CHECK} {stream_label}", fg=Style.SUCCESS)
-    click.echo()
-
-    # Start MQTT bridge in background thread if configured
-    mqtt_thread = None
-    if mqtt_adapter:
-        px = Plexus(api_key=api_key, endpoint=endpoint)
-
-        def _mqtt_forwarder(metrics):
-            for m in metrics:
-                try:
-                    px.send(m.name, m.value, tags=m.tags or {})
-                except Exception as e:
-                    logger.warning(f"MQTT forward failed: {e}")
-
-        mqtt_adapter._on_data_callback = _mqtt_forwarder
-        try:
-            mqtt_adapter.connect()
-            mqtt_thread = threading.Thread(target=mqtt_adapter._run_loop, daemon=True)
-            mqtt_thread.start()
-            status_line(f"MQTT bridge active: {mqtt_broker}")
-        except Exception as e:
-            warning(f"MQTT connect failed: {e}")
-
-    if live:
-        # Live TUI mode
-        try:
-            from plexus.tui import LiveDashboard
-            dashboard = LiveDashboard()
-
-            def _connector_fn():
-                run_connector(
-                    api_key=api_key,
-                    endpoint=endpoint,
-                    on_status=dashboard.wrap_status_callback(status_line),
-                    sensor_hub=sensor_hub,
-                    camera_hub=camera_hub,
-                    can_adapters=can_adapters,
-                )
-
-            dashboard.run(_connector_fn)
-        except ImportError as e:
-            warning(str(e).strip())
-            hint("Install with: pip install plexus-agent[tui]")
-            click.echo()
-            sys.exit(1)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            if mqtt_adapter:
-                mqtt_adapter.disconnect()
-    else:
-        # Standard mode
-        try:
-            run_connector(
-                api_key=api_key,
-                endpoint=endpoint,
-                on_status=status_line,
-                sensor_hub=sensor_hub,
-                camera_hub=camera_hub,
-                can_adapters=can_adapters,
-            )
-        except KeyboardInterrupt:
-            click.echo()
-            status_line("Disconnected")
-            click.echo()
-        finally:
-            if mqtt_adapter:
-                mqtt_adapter.disconnect()
 
 
 @main.command()
@@ -1010,7 +821,7 @@ def status():
             px.send("plexus.agent.status", 1, tags={"event": "status_check"})
             spinner.stop("Connected", success_status=True)
             click.echo()
-            hint("Ready to run: plexus run")
+            hint("Ready to run: plexus start")
             click.echo()
         except AuthenticationError:
             spinner.stop("Auth failed", success_status=False)
@@ -1390,11 +1201,11 @@ def scan(bus: int, show_all: bool, setup: bool, output_json: bool):
     divider()
     click.echo()
     click.secho(
-        f"  {Style.ARROW} Run 'plexus run' to stream all detected hardware",
+        f"  {Style.ARROW} Run 'plexus start' to stream all detected hardware",
         fg=Style.INFO,
     )
     click.secho(
-        f"  {Style.ARROW} Run 'plexus run --sensor system' for system metrics only",
+        f"  {Style.ARROW} Run 'plexus start --sensor system' for system metrics only",
         fg=Style.INFO,
     )
     click.echo()

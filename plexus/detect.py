@@ -3,7 +3,7 @@ Hardware detection for Plexus devices.
 
 Detects sensors, cameras, serial ports, USB devices, GPIO, Bluetooth,
 network interfaces, and system info. Used by the CLI for both
-`plexus run` and `plexus scan`.
+`plexus start` and `plexus scan`.
 """
 
 import glob

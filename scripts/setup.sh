@@ -8,7 +8,7 @@
 # This script:
 #   1. Installs Python if missing
 #   2. Installs the Plexus agent
-#   3. Configures API key or pairs with a code
+#   3. Configures API key or signs in via browser
 #
 # Note: The canonical version of this script is served from the frontend
 # at app/setup/route.ts. This copy is for reference/offline use.
@@ -24,16 +24,11 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Parse arguments
-PAIRING_CODE=""
 API_KEY=""
 DEVICE_NAME=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --code|-c)
-            PAIRING_CODE="$2"
-            shift 2
-            ;;
         --api-key|--key|-k)
             API_KEY="$2"
             shift 2
@@ -245,7 +240,7 @@ if [ "$OS" = "Linux" ]; then
     echo ""
 fi
 
-# Step 3: Pair the device
+# Step 3: Authenticate the device
 echo "─────────────────────────────────────────"
 echo ""
 
@@ -275,44 +270,23 @@ if [ -n "$API_KEY" ]; then
         echo -e "  ${GREEN}✓ Organization resolved${NC}"
     fi
     echo ""
-elif [ -n "$PAIRING_CODE" ]; then
-    echo "  Pairing with code: $PAIRING_CODE"
-    echo ""
-
-    plexus pair --code "$PAIRING_CODE"
-
-    if [ -n "$DEVICE_NAME" ]; then
-        # Write device name to config (used by plexus run)
-        CONFIG_FILE="$HOME/.plexus/config.json"
-        if [ -f "$CONFIG_FILE" ] && command -v python3 &> /dev/null; then
-            python3 -c "
-import json, pathlib
-p = pathlib.Path('$CONFIG_FILE')
-c = json.loads(p.read_text())
-c['source_name'] = '$DEVICE_NAME'
-p.write_text(json.dumps(c, indent=2))
-"
-            echo -e "  Device name set to: ${CYAN}$DEVICE_NAME${NC}"
-        fi
-    fi
 else
-    echo "  No pairing code or API key provided."
+    echo "  No API key provided."
     echo ""
-    echo "  To pair this device:"
+    echo "  To authenticate this device:"
     echo ""
-    echo "  1. Go to ${CYAN}https://app.plexus.company/devices${NC}"
-    echo "  2. Click \"Add Device\" to get a pairing code"
-    echo "  3. Run: ${CYAN}plexus pair --code YOUR_CODE${NC}"
+    echo "  1. Get an API key from ${CYAN}https://app.plexus.company${NC} → Settings → Developer"
+    echo "  2. Run: ${CYAN}plexus start --key plx_xxxxx${NC}"
     echo ""
-    echo "  Or run ${CYAN}plexus pair${NC} to sign in directly."
+    echo "  Or run ${CYAN}plexus login${NC} to sign in via browser."
     echo ""
 
-    # Check if already paired
+    # Check if already authenticated
     if plexus status 2>/dev/null | grep -q "Connected"; then
-        echo -e "  ${GREEN}✓ Device is already paired${NC}"
+        echo -e "  ${GREEN}✓ Device is already authenticated${NC}"
         echo ""
     else
-        echo "  Skipping pairing for now..."
+        echo "  Skipping authentication for now..."
         echo ""
     fi
 fi
@@ -323,7 +297,7 @@ echo ""
 echo -e "  ${GREEN}Setup complete!${NC}"
 echo ""
 echo "  Quick commands:"
-echo "    plexus run       # Start agent (foreground)"
+echo "    plexus start     # Start agent (foreground)"
 echo "    plexus status    # Check connection"
 echo "    plexus scan      # List sensors"
 echo ""

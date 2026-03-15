@@ -14,7 +14,7 @@ Usage:
     hub.run(Plexus())
 
 Or from the CLI:
-    plexus run --sensor system
+    plexus start --sensor system
 """
 
 import os

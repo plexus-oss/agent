@@ -5,7 +5,7 @@ Shows real-time telemetry table with metric names, current values,
 rates, buffer status, and connection state. Like htop for your hardware.
 
 Usage:
-    plexus run --live
+    plexus start --live
 
 Requires: pip install plexus-agent[tui] (installs 'rich')
 """

@@ -66,27 +66,27 @@ plexus start --key plx_xxxxx
 ### Option 2: Step by step
 
 ```bash
-# 1. Pair (one-time) — get your API key from app.plexus.company/devices
-plexus pair --key plx_xxxxx
+# 1. Login (one-time) — get your API key from app.plexus.company/devices
+plexus login --key plx_xxxxx
 
-# 2. Run the agent
-plexus run
+# 2. Start the agent
+plexus start
 ```
 
 The agent auto-detects connected sensors, cameras, and CAN interfaces. Control everything from the dashboard.
 
 ```bash
 # Name the device for fleet identification
-plexus run --name "test-rig-01"
+plexus start --name "test-rig-01"
 
 # Stream system health (CPU, memory, disk, thermals)
-plexus run --sensor system
+plexus start --sensor system
 
 # Bridge an MQTT broker
-plexus run --mqtt localhost:1883
+plexus start --mqtt localhost:1883
 
 # Skip sensor/camera auto-detection
-plexus run --no-sensors --no-cameras
+plexus start --no-sensors --no-cameras
 ```
 
 ### Option 2: Direct HTTP
@@ -124,12 +124,12 @@ See [API.md](https://github.com/plexus-oss/agent/blob/main/API.md) for curl, Jav
 
 | Method            | How to get it                                             | Used by                            |
 | ----------------- | --------------------------------------------------------- | ---------------------------------- |
-| API key (`plx_*`) | Dashboard → Devices → Add Device, or Settings → Developer | `plexus run` and `Plexus()` client |
+| API key (`plx_*`) | Dashboard → Devices → Add Device, or Settings → Developer | `plexus start` and `Plexus()` client |
 
-Two ways to pair:
+Two ways to authenticate:
 
-1. **API key (recommended):** `plexus pair --key plx_xxxxx`
-2. **Browser login:** `plexus pair` (opens browser for OAuth device flow)
+1. **API key (recommended):** `plexus start --key plx_xxxxx`
+2. **Browser login:** `plexus login` (opens browser for OAuth device flow)
 
 Credentials are stored in `~/.plexus/config.json` or can be set via environment variables:
 
@@ -141,10 +141,9 @@ export PLEXUS_ENDPOINT=https://app.plexus.company  # default
 ## CLI Reference
 
 ```
-plexus start [--key KEY] [--bus N] [--name NAME]      Set up and stream (interactive)
+plexus start [--key KEY] [--name NAME] [OPTIONS]       Set up and stream
+plexus login                                           Log in via browser
 plexus add   [CAPABILITY...]                           Install capabilities (sensors, can, mqtt, ...)
-plexus run   [--live] [--auto-install] [OPTIONS]       Start the agent
-plexus pair  [--key KEY]                               Pair device with your account
 plexus scan  [--all] [--setup] [--json]                Detect connected hardware
 plexus status                                          Check connection and config
 plexus doctor                                          Diagnose issues
@@ -152,20 +151,33 @@ plexus doctor                                          Diagnose issues
 
 ### plexus start
 
-Set up and start streaming in one command. Handles auth, hardware detection, dependency installation, and sensor selection interactively.
+Set up and start streaming in one command. Handles auth, hardware detection, dependency installation, and sensor selection. Interactive when run without flags, non-interactive with flags like `--sensor` or `--no-sensors`.
 
 ```bash
-plexus start                         # Interactive setup
-plexus start --key plx_xxx           # Non-interactive auth
-plexus start --key plx_xxx -b 0      # Specify I2C bus
-plexus start --name "robot-01"       # Name the device
+plexus start                              # Interactive setup
+plexus start --key plx_xxx                # Non-interactive auth
+plexus start --sensor system              # Stream CPU, memory, disk, thermals
+plexus start --live                       # Live terminal dashboard (like htop)
+plexus start --mqtt localhost:1883        # Bridge MQTT data
+plexus start --no-sensors --no-cameras    # Skip hardware auto-detection
+plexus start --auto-install               # Auto-install missing dependencies
+plexus start --name "robot-01"            # Name the device
 ```
 
-| Flag         | Description                             |
-| ------------ | --------------------------------------- |
-| `-k, --key`  | API key (skips interactive auth prompt) |
-| `-n, --name` | Device name for fleet identification    |
-| `-b, --bus`  | I2C bus number (default: 1)             |
+| Flag             | Description                                         |
+| ---------------- | --------------------------------------------------- |
+| `-k, --key`      | API key (skips interactive auth prompt)              |
+| `-n, --name`     | Device name for fleet identification                |
+| `--slug`         | Device slug (source ID) from dashboard              |
+| `--org`          | Organization ID from dashboard                      |
+| `-b, --bus`      | I2C bus number (default: 1)                         |
+| `-s, --sensor`   | Sensor type to use (e.g. `system`). Repeatable.     |
+| `--no-sensors`   | Disable I2C sensor auto-detection                   |
+| `--no-cameras`   | Disable camera auto-detection                       |
+| `--mqtt`         | MQTT broker to bridge (e.g. `localhost:1883`)       |
+| `--mqtt-topic`   | MQTT topic to subscribe to (default: `sensors/#`)   |
+| `--live`         | Show live terminal dashboard with real-time metrics |
+| `--auto-install` | Auto-install missing Python dependencies on demand  |
 
 ### plexus add
 
@@ -178,31 +190,6 @@ plexus add sensors camera            # Add multiple
 ```
 
 Available capabilities: `sensors`, `camera`, `picamera`, `mqtt`, `can`, `mavlink`, `serial`, `system`, `tui`.
-
-### plexus run
-
-Start the agent. Connects to Plexus and streams telemetry controlled from the dashboard.
-
-```bash
-plexus run                              # Start with auto-detected hardware
-plexus run --live                       # Live terminal dashboard (like htop)
-plexus run --sensor system              # Stream CPU, memory, disk, thermals
-plexus run --auto-install               # Auto-install missing dependencies
-plexus run --mqtt localhost:1883        # Bridge MQTT data
-plexus run --no-sensors --no-cameras    # Skip hardware auto-detection
-```
-
-| Flag             | Description                                         |
-| ---------------- | --------------------------------------------------- |
-| `-n, --name`     | Device name for fleet identification                |
-| `--live`         | Show live terminal dashboard with real-time metrics |
-| `--auto-install` | Auto-install missing Python dependencies on demand  |
-| `--no-sensors`   | Disable I2C sensor auto-detection                   |
-| `--no-cameras`   | Disable camera auto-detection                       |
-| `-b, --bus`      | I2C bus number (default: 1)                         |
-| `-s, --sensor`   | Sensor type to use (e.g. `system`). Repeatable.     |
-| `--mqtt`         | MQTT broker to bridge (e.g. `localhost:1883`)       |
-| `--mqtt-topic`   | MQTT topic to subscribe to (default: `sensors/#`)   |
 
 ### plexus scan
 
@@ -387,7 +374,7 @@ adapter.run(on_data=my_callback)
 Or bridge directly from the CLI:
 
 ```bash
-plexus run --mqtt localhost:1883 --mqtt-topic "sensors/#"
+plexus start --mqtt localhost:1883 --mqtt-topic "sensors/#"
 ```
 
 ## Buffering and Reliability
@@ -410,7 +397,7 @@ px.flush_buffer()
 
 ## Live Terminal Dashboard
 
-Run `plexus run --live` to get a real-time terminal UI — like htop for your hardware:
+Run `plexus start --live` to get a real-time terminal UI — like htop for your hardware:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -431,12 +418,12 @@ Requires the `tui` extra: `pip install plexus-agent[tui]`
 ## Architecture
 
 ```
-Device (plexus run)
+Device (plexus start)
   ├── WebSocket → PartyKit Server → Dashboard (real-time)
   └── HTTP POST → /api/ingest → ClickHouse (storage)
 ```
 
-- **WebSocket path**: Used by `plexus run` for real-time streaming controlled from the dashboard. Data flows through the PartyKit relay to connected browsers.
+- **WebSocket path**: Used by `plexus start` for real-time streaming controlled from the dashboard. Data flows through the PartyKit relay to connected browsers.
 - **HTTP path**: Used by the `Plexus()` client for direct data ingestion. Data is stored in ClickHouse for historical queries.
 
 When recording a session, both paths are used — WebSocket for live view, HTTP for persistence.

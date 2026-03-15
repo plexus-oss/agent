@@ -39,7 +39,7 @@ Send telemetry data to Plexus using HTTP or WebSocket.
 
 ### Option 1: Web-Controlled Device (Recommended)
 
-Set up your device with one command. Use an API key for fleet provisioning, or a pairing code for single devices:
+Set up your device with one command using an API key:
 
 ```bash
 # With API key (fleet provisioning — get from Settings → Developer)
@@ -77,10 +77,10 @@ Plexus uses API keys for all authentication:
 
 ### Getting an API Key
 
-**Option A: Device pairing (recommended for devices)**
+**Option A: Browser login (recommended for devices)**
 
-1. Run `plexus pair` on your device
-2. Approve the pairing in your browser
+1. Run `plexus login` on your device
+2. Sign in via your browser
 3. API key is saved to `~/.plexus/config.json`
 
 **Option B: Manual creation**
@@ -503,7 +503,7 @@ For Raspberry Pi and other Linux devices, the Python SDK includes sensor drivers
 
 ```bash
 pip install plexus-agent[sensors]
-plexus run
+plexus start
 ```
 
 ### Supported Sensors
@@ -539,7 +539,7 @@ class MySensor(BaseSensor):
 | 401    | Invalid or missing API key            |
 | 403    | API key lacks permissions             |
 | 404    | Resource not found                    |
-| 410    | Resource expired (e.g., pairing code) |
+| 410    | Resource expired                      |
 
 ## Best Practices
 
@@ -548,4 +548,4 @@ class MySensor(BaseSensor):
 - **Consistent source_id** - Use the same ID for each physical device/source
 - **Use tags** - Label data for filtering (e.g., `{"location": "lab"}`)
 - **Use sessions** - Group related data for easier analysis
-- **Prefer WebSocket** - For real-time UI-controlled devices, use `plexus run`
+- **Prefer WebSocket** - For real-time UI-controlled devices, use `plexus start`

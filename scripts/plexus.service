@@ -7,7 +7,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=pi
-ExecStart=/usr/local/bin/plexus run
+ExecStart=/usr/local/bin/plexus start
 Restart=always
 RestartSec=10
 Environment=PLEXUS_CONFIG_DIR=/home/pi/.plexus

@@ -149,7 +149,7 @@ def require_login() -> None:
     """Raise an error if not logged in."""
     if not is_logged_in():
         raise RuntimeError(
-            "Not logged in. Run 'plexus pair' to connect your account."
+            "Not logged in. Run 'plexus login' to connect your account."
         )
 
 
