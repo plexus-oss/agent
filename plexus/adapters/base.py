@@ -38,11 +38,15 @@ Example custom adapter:
             return [Metric(metric, float(value))]
 """
 
+import logging
+import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Union
 import time
+
+logger = logging.getLogger(__name__)
 
 
 class AdapterState(Enum):
@@ -160,6 +164,7 @@ class ProtocolAdapter(ABC):
         self._last_data_time: Optional[float] = None
         self._on_data_callback: Optional[DataCallback] = None
         self._on_state_change: Optional[Callable[[AdapterState], None]] = None
+        self._on_error_report: Optional[Any] = None  # async fn(source, error, severity)
 
     @property
     def state(self) -> AdapterState:
@@ -188,10 +193,29 @@ class ProtocolAdapter(ABC):
 
     def _set_state(self, state: AdapterState, error: Optional[str] = None):
         """Update adapter state and notify listeners"""
+        old_state = self._state
         self._state = state
         self._error = error
         if self._on_state_change:
             self._on_state_change(state)
+        # Report transitions to ERROR or RECONNECTING to dashboard
+        if state in (AdapterState.ERROR, AdapterState.RECONNECTING) and old_state != state:
+            if self._on_error_report:
+                import asyncio
+                severity = "error" if state == AdapterState.ERROR else "warning"
+                msg = error or f"Adapter {self.config.name} entered {state.value}"
+                try:
+                    coro = self._on_error_report(
+                        f"adapter.{self.config.name}", msg, severity
+                    )
+                    # Fire-and-forget if there's a running loop
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.ensure_future(coro)
+                    else:
+                        loop.run_until_complete(coro)
+                except Exception:
+                    pass
 
     def _emit_data(self, metrics: List[Metric]):
         """Emit data to callback"""
@@ -200,6 +224,46 @@ class ProtocolAdapter(ABC):
             self._last_data_time = time.time()
             if self._on_data_callback:
                 self._on_data_callback(metrics)
+
+    # =========================================================================
+    # Auto-Reconnection
+    # =========================================================================
+
+    def _reconnect_loop(self, max_attempts: Optional[int] = None):
+        """Exponential backoff reconnection.
+
+        Uses config values if max_attempts is not specified.
+        """
+        if max_attempts is None:
+            max_attempts = self.config.max_reconnect_attempts
+
+        attempt = 0
+        delay = self.config.reconnect_interval
+
+        while max_attempts is None or attempt < max_attempts:
+            attempt += 1
+            jitter = random.uniform(0.75, 1.25)
+            time.sleep(delay * jitter)
+
+            try:
+                self.disconnect()
+                result = self.connect()
+                if result:
+                    logger.info(
+                        "%s: reconnected after %d attempt(s)",
+                        self.config.name, attempt,
+                    )
+                    return True
+            except Exception as e:
+                logger.warning(
+                    "%s: reconnect attempt %d failed: %s",
+                    self.config.name, attempt, e,
+                )
+
+            delay = min(delay * 2, 60.0)
+
+        self._set_state(AdapterState.ERROR, "Max reconnect attempts reached")
+        return False
 
     # =========================================================================
     # Abstract methods - MUST be implemented by subclasses
@@ -305,14 +369,27 @@ class ProtocolAdapter(ABC):
         Default run loop implementation (polling mode).
 
         Override this for push-based protocols like MQTT.
+        Handles disconnect detection and auto-reconnection.
         """
         try:
-            while self.is_connected:
-                metrics = self.poll()
-                if metrics:
-                    self._emit_data(metrics)
-                    self.on_data(metrics)
-                time.sleep(0.01)  # 100 Hz max
+            while True:
+                try:
+                    while self.is_connected:
+                        metrics = self.poll()
+                        if metrics:
+                            self._emit_data(metrics)
+                            self.on_data(metrics)
+                        time.sleep(0.01)  # 100 Hz max
+                except (ConnectionError, OSError) as e:
+                    logger.warning("%s: connection lost: %s", self.config.name, e)
+                    self._set_state(AdapterState.RECONNECTING, str(e))
+                    if self.config.auto_reconnect:
+                        if self._reconnect_loop():
+                            continue
+                    break
+
+                # Normal exit (is_connected went False)
+                break
         except KeyboardInterrupt:
             pass
         finally:

@@ -67,6 +67,7 @@ class CommandExecutor:
 
         Returns (allowed, reason) tuple.
         """
+        # SECURITY: secure-by-default gate. Do NOT change to permissive.
         # No allowlist = no shell execution (secure by default)
         if not self.allowlist:
             return False, "Shell execution disabled (no allowlist configured)"

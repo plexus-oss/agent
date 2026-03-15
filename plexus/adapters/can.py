@@ -254,6 +254,10 @@ class CANAdapter(ProtocolAdapter):
 
         Returns:
             List of Metric objects for raw frames and/or decoded signals.
+
+        Raises:
+            OSError: On bus disconnect (triggers auto-reconnect in run loop).
+            ProtocolError: If reading data fails.
         """
         if not self._bus:
             return []
@@ -279,6 +283,8 @@ class CANAdapter(ProtocolAdapter):
                 decoded_metrics = self._decode_message(message, timestamp)
                 metrics.extend(decoded_metrics)
 
+        except OSError:
+            raise  # Let run loop handle disconnect/reconnect
         except Exception as e:
             logger.error(f"Error reading CAN frame: {e}")
             raise ProtocolError(f"CAN read error: {e}")

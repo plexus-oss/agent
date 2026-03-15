@@ -27,6 +27,7 @@ import logging
 import os
 import platform
 import random
+import socket
 import time
 from typing import Optional, Callable, List, Dict, Any, TYPE_CHECKING
 
@@ -89,7 +90,9 @@ class PlexusConnector:
         self._running = False
         self._authenticated = False
         self._reconnect_count = 0
+        self._connect_time: float = 0.0
         self._http_session: Optional[Any] = None
+        self._px: Optional[Any] = None  # Plexus client ref for buffer flush
 
         # Typed command registry
         self._typed_commands = command_registry or CommandRegistry()
@@ -110,7 +113,42 @@ class PlexusConnector:
             mavlink_connections=mavlink_connections,
             on_status=self.on_status,
             persist_fn=self._persist_async,
+            error_report_fn=self.report_error,
         )
+
+    # =========================================================================
+    # Heartbeat & Error Reporting
+    # =========================================================================
+
+    async def _heartbeat_loop(self, ws, interval=30):
+        """Send heartbeat every interval so server knows device is alive."""
+        from plexus import __version__
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                await ws.send(json.dumps({
+                    "type": "heartbeat",
+                    "source_id": self.source_id,
+                    "uptime_s": time.time() - self._connect_time,
+                    "agent_version": __version__,
+                }))
+        except (asyncio.CancelledError, ConnectionClosed):
+            pass
+
+    async def report_error(self, source: str, error: str, severity: str = "warning"):
+        """Report device-side error to dashboard via WebSocket."""
+        if self._ws:
+            try:
+                await self._ws.send(json.dumps({
+                    "type": "device_error",
+                    "source_id": self.source_id,
+                    "source": source,
+                    "error": str(error),
+                    "severity": severity,
+                    "timestamp": time.time(),
+                }))
+            except Exception:
+                logger.debug("Failed to send error report to dashboard")
 
     # =========================================================================
     # Org ID Resolution
@@ -142,6 +180,18 @@ class PlexusConnector:
         except Exception:
             pass
         return None
+
+    @staticmethod
+    def _get_local_ip() -> str:
+        """Get the local IP address of this device."""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "unknown"
 
     # =========================================================================
     # Connection URLs
@@ -248,16 +298,23 @@ class PlexusConnector:
                 async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
                     self._ws = ws
                     self._authenticated = False
+                    self._connect_time = time.time()
 
                     # Reset backoff and reconnect counter after stable connection (>30s)
                     backoff = 1.0
 
-                    # Build auth message
+                    # Build auth message with device metadata
+                    from plexus import __version__
                     auth_msg = {
                         "type": "device_auth",
                         "api_key": self.api_key,
                         "source_id": self.source_id,
                         "platform": platform.system(),
+                        "agent_version": __version__,
+                        "hostname": socket.gethostname(),
+                        "ip_addresses": [self._get_local_ip()],
+                        "os_detail": f"{platform.system()} {platform.release()}",
+                        "python_version": platform.python_version(),
                         "sensors": self.sensor_hub.get_info() if self.sensor_hub else [],
                         "cameras": self.camera_hub.get_info() if self.camera_hub else [],
                         "can": [
@@ -274,8 +331,17 @@ class PlexusConnector:
                     await ws.send(json.dumps(auth_msg))
                     self.on_status("Authenticating...")
 
-                    async for message in ws:
-                        await self._handle_message(message)
+                    # Launch heartbeat alongside message listener
+                    heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws))
+                    try:
+                        async for message in ws:
+                            await self._handle_message(message)
+                    finally:
+                        heartbeat_task.cancel()
+                        try:
+                            await heartbeat_task
+                        except asyncio.CancelledError:
+                            pass
 
             except ConnectionClosed as e:
                 self.on_status(f"Disconnected: {e.reason}")
@@ -354,10 +420,18 @@ class PlexusConnector:
     # =========================================================================
 
     def disconnect(self):
-        """Disconnect and cleanup."""
+        """Disconnect and cleanup, flushing any buffered telemetry."""
         self._running = False
         self._commands.cancel()
         self._streams.cancel_all()
+
+        # Flush any buffered points before closing
+        if self._px:
+            try:
+                self._px.flush_buffer()
+            except Exception:
+                logger.warning("Failed to flush buffer on shutdown")
+
         self._ws = None
 
         if self._http_session:

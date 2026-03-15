@@ -39,6 +39,7 @@ class StreamManager:
         mavlink_connections: Optional[List["DetectedMAVLink"]] = None,
         on_status: Optional[Callable[[str], None]] = None,
         persist_fn: Optional[Callable[[List[Dict[str, Any]]], Any]] = None,
+        error_report_fn: Optional[Callable] = None,
     ):
         self.sensor_hub = sensor_hub
         self.camera_hub = camera_hub
@@ -46,6 +47,7 @@ class StreamManager:
         self.mavlink_connections = mavlink_connections or []
         self.on_status = on_status or (lambda x: None)
         self.persist_fn = persist_fn
+        self.error_report_fn = error_report_fn
 
         self._active_streams: Dict[str, asyncio.Task] = {}
         self._active_camera_streams: Dict[str, asyncio.Task] = {}
@@ -110,6 +112,10 @@ class StreamManager:
                 pass
             except Exception as e:
                 self.on_status(f"Stream error: {e}")
+                if self.error_report_fn:
+                    await self.error_report_fn(
+                        "stream.sensor", str(e), "error"
+                    )
 
         self._active_streams[stream_id] = asyncio.create_task(stream_loop())
 
@@ -345,6 +351,10 @@ class StreamManager:
             except Exception as e:
                 logger.debug(f"CAN stream error on {channel}: {e}")
                 self.on_status(f"CAN stream error: {e}")
+                if self.error_report_fn:
+                    await self.error_report_fn(
+                        f"stream.can.{channel}", str(e), "error"
+                    )
             finally:
                 self._cleanup_can_instance(channel)
 
@@ -456,6 +466,10 @@ class StreamManager:
             except Exception as e:
                 logger.debug(f"MAVLink stream error on {conn_str}: {e}")
                 self.on_status(f"MAVLink stream error: {e}")
+                if self.error_report_fn:
+                    await self.error_report_fn(
+                        f"stream.mavlink", str(e), "error"
+                    )
             finally:
                 self._cleanup_mavlink_instance(conn_str)
 

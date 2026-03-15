@@ -201,16 +201,46 @@ class MQTTAdapter(ProtocolAdapter):
             self._set_state(AdapterState.ERROR, f"Connection refused: {rc}")
 
     def _on_disconnect(self, client, userdata, rc, properties=None):
-        """Handle MQTT disconnection."""
+        """Handle MQTT disconnection with auto-reconnect."""
         if rc != 0:
             logger.warning(f"Unexpected MQTT disconnect (rc={rc}), attempting reconnect...")
             self._set_state(
                 AdapterState.RECONNECTING,
                 f"Unexpected disconnect: {rc}"
             )
+            if self.config.auto_reconnect:
+                import threading
+                threading.Thread(
+                    target=self._mqtt_reconnect_loop,
+                    daemon=True,
+                ).start()
         else:
             logger.info("MQTT disconnected cleanly")
             self._set_state(AdapterState.DISCONNECTED)
+
+    def _mqtt_reconnect_loop(self):
+        """Reconnect to MQTT broker with exponential backoff."""
+        import random
+        attempt = 0
+        delay = self.config.reconnect_interval
+        max_attempts = self.config.max_reconnect_attempts
+
+        while attempt < max_attempts:
+            attempt += 1
+            jitter = random.uniform(0.75, 1.25)
+            time.sleep(delay * jitter)
+
+            try:
+                if self._client:
+                    self._client.reconnect()
+                    logger.info("MQTT reconnected after %d attempt(s)", attempt)
+                    return
+            except Exception as e:
+                logger.warning("MQTT reconnect attempt %d failed: %s", attempt, e)
+
+            delay = min(delay * 2, 60.0)
+
+        self._set_state(AdapterState.ERROR, "Max MQTT reconnect attempts reached")
 
     def _on_message(self, client, userdata, msg):
         """Handle incoming MQTT message."""

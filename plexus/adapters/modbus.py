@@ -364,6 +364,7 @@ class ModbusAdapter(ProtocolAdapter):
             List of Metric objects — one per configured register.
 
         Raises:
+            ConnectionError/OSError: On connection loss (triggers auto-reconnect).
             ProtocolError: If a Modbus read fails.
         """
         if not self._client:
@@ -398,6 +399,8 @@ class ModbusAdapter(ProtocolAdapter):
                     )
                 )
 
+            except OSError:
+                raise  # Let run loop handle disconnect/reconnect
             except Exception as e:
                 logger.error(
                     f"Error reading register '{reg['name']}' "

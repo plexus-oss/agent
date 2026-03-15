@@ -251,6 +251,10 @@ class SerialAdapter(ProtocolAdapter):
 
         Returns:
             List of Metric objects. Empty list if no complete lines available.
+
+        Raises:
+            OSError: On port disconnect (triggers auto-reconnect in run loop).
+            ProtocolError: If reading data fails.
         """
         if not self._serial or not self._serial.is_open:
             return []
@@ -262,6 +266,8 @@ class SerialAdapter(ProtocolAdapter):
             for line in lines:
                 parsed = self._parse_line(line)
                 metrics.extend(parsed)
+        except OSError:
+            raise  # Let run loop handle disconnect/reconnect
         except Exception as e:
             logger.error(f"Error reading from serial port: {e}")
             raise ProtocolError(f"Serial read error: {e}")

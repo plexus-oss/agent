@@ -97,6 +97,14 @@ except ImportError:
     SerialAdapter = None  # type: ignore
     _HAS_SERIAL = False
 
+# Import BLERelayAdapter (requires optional [ble] extra)
+try:
+    from plexus.adapters.ble import BLERelayAdapter
+    _HAS_BLE = True
+except ImportError:
+    BLERelayAdapter = None  # type: ignore
+    _HAS_BLE = False
+
 __all__ = [
     "ProtocolAdapter",
     "Metric",
@@ -110,4 +118,5 @@ __all__ = [
     "MAVLinkAdapter",
     "OPCUAAdapter",
     "SerialAdapter",
+    "BLERelayAdapter",
 ]

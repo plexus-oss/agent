@@ -167,6 +167,7 @@ class SensorHub:
         self._running = False
         self.default_timeout = default_timeout
         self.max_workers = max_workers
+        self.error_report_fn: Optional[Any] = None  # async fn(source, error, severity)
 
     def add(self, sensor: BaseSensor) -> "SensorHub":
         """Add a sensor to the hub."""
@@ -210,12 +211,31 @@ class SensorHub:
                     "%s disabled after %d consecutive failures",
                     sensor.name, sensor._consecutive_failures,
                 )
+                self._report_sensor_error(
+                    sensor,
+                    f"Disabled after {sensor._consecutive_failures} consecutive failures",
+                    "error",
+                )
             else:
                 sensor.sample_rate = new_rate
                 logger.warning(
                     "%s: %d consecutive failures, reducing poll rate to %.2f Hz",
                     sensor.name, sensor._consecutive_failures, new_rate,
                 )
+
+    def _report_sensor_error(self, sensor: BaseSensor, error: str, severity: str) -> None:
+        """Report sensor error to dashboard if error_report_fn is set."""
+        if self.error_report_fn:
+            import asyncio
+            try:
+                coro = self.error_report_fn(f"sensor.{sensor.name}", error, severity)
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.ensure_future(coro)
+                else:
+                    loop.run_until_complete(coro)
+            except Exception:
+                pass
 
     def _handle_sensor_success(self, sensor: BaseSensor) -> None:
         """Reset failure tracking on successful read."""
