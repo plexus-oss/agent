@@ -468,7 +468,7 @@ class StreamManager:
                 self.on_status(f"MAVLink stream error: {e}")
                 if self.error_report_fn:
                     await self.error_report_fn(
-                        f"stream.mavlink", str(e), "error"
+                        "stream.mavlink", str(e), "error"
                     )
             finally:
                 self._cleanup_mavlink_instance(conn_str)

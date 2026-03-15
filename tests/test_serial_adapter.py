@@ -4,10 +4,8 @@ Tests for SerialAdapter
 Run with: pytest tests/test_serial_adapter.py -v
 """
 
-import json
 import pytest
-import time
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 
 class TestSerialAdapterImport:

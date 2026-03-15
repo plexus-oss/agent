@@ -6,7 +6,6 @@ Run with: pytest tests/test_mqtt_adapter.py -v
 
 import json
 import pytest
-import time
 from unittest.mock import Mock, MagicMock, patch
 
 
