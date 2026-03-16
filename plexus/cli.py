@@ -177,6 +177,44 @@ def _validate_api_key(api_key: str, endpoint: str) -> bool:
         return False
 
 
+def _detect_device_type() -> str:
+    """Detect the type of device we're running on."""
+    import platform
+
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+
+    # Check for Raspberry Pi
+    try:
+        with open("/proc/device-tree/model", "r") as f:
+            model = f.read().strip()
+            if "raspberry pi" in model.lower():
+                return model
+    except (FileNotFoundError, PermissionError):
+        pass
+
+    # Check for Jetson
+    try:
+        with open("/proc/device-tree/model", "r") as f:
+            model = f.read().strip()
+            if "jetson" in model.lower():
+                return model
+    except (FileNotFoundError, PermissionError):
+        pass
+
+    if system == "darwin":
+        mac_model = platform.machine()
+        return f"macOS ({mac_model})"
+    elif system == "linux":
+        if "aarch64" in machine or "arm" in machine:
+            return f"Linux ({machine})"
+        return f"Linux ({machine})"
+    elif system == "windows":
+        return f"Windows ({machine})"
+
+    return f"{platform.system()} ({machine})"
+
+
 def _mask_key(key: str) -> str:
     """Mask an API key for display: plx_a1b2...c3d4"""
     if len(key) <= 12:
@@ -720,8 +758,55 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
         except Exception as e:
             mqtt_error = f"MQTT setup failed: {e}"
 
+    # ── Device type detection ────────────────────────────────────────────
+    device_type = _detect_device_type()
+    auto_system = False
+
+    # If nothing detected, suggest system metrics
+    if not sensors and not cameras and not up_can and not mqtt_adapter and not non_interactive:
+        click.echo(
+            click.style(f"  {Style.BULLET} ", fg=Style.DIM)
+            + f"Detected: {device_type}"
+        )
+        click.echo(
+            click.style(f"  {Style.BULLET} ", fg=Style.DIM)
+            + "No hardware sensors found"
+        )
+        click.echo()
+
+        enable_system = click.confirm(
+            click.style("  Enable system metrics", fg=Style.INFO)
+            + click.style(" (CPU, memory, temperature)?", fg=Style.DIM),
+            default=True,
+        )
+
+        if enable_system:
+            auto_system = True
+            try:
+                from plexus.detect import detect_named_sensors
+                sensor_hub, sensors = detect_named_sensors(["system"])
+            except (ImportError, ValueError):
+                from plexus.deps import prompt_install
+                if prompt_install("psutil", extra="system"):
+                    from plexus.detect import detect_named_sensors
+                    sensor_hub, sensors = detect_named_sensors(["system"])
+
+            if sensors:
+                for s in sensors:
+                    s_metrics = getattr(s, 'metrics', None) or (
+                        getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None
+                    )
+                    metrics_str = ", ".join(s_metrics) if s_metrics else ""
+                    click.echo(
+                        f"    {Style.CHECK} "
+                        + click.style(f"{s.name:<12}", fg=Style.SUCCESS)
+                        + click.style(metrics_str, fg=Style.DIM)
+                    )
+                click.echo()
+
     # ── Sensor selection (interactive only) ────────────────────────────────
-    if sensors and not non_interactive:
+    # Skip sensor selection if we just auto-enabled system metrics
+    if sensors and not non_interactive and not auto_system:
         click.echo(f"  Found {len(sensors)} sensor{'s' if len(sensors) != 1 else ''} on I2C bus {bus}:")
         click.echo()
 
