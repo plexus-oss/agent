@@ -188,6 +188,50 @@ def _mask_key(key: str) -> str:
 # Terminal Auth
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _select(label: str, options: list, default: int = 0) -> int:
+    """Arrow-key selector. Returns the chosen index."""
+    import tty
+    import termios
+
+    selected = default
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+
+    def _render():
+        # Move cursor up to overwrite previous render (except first time)
+        for i, opt in enumerate(options):
+            prefix = click.style("  ›", fg=Style.SUCCESS) if i == selected else "   "
+            text = click.style(f" {opt}", bold=(i == selected))
+            click.echo(f"\r{prefix}{text}   ")  # trailing spaces clear leftover chars
+
+    click.echo(click.style(f"  {label}", fg=Style.INFO))
+    click.echo()
+    _render()
+
+    try:
+        tty.setraw(fd)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch == "\r" or ch == "\n":
+                break
+            if ch == "\x03":  # Ctrl-C
+                raise KeyboardInterrupt
+            if ch == "\x1b":  # Escape sequence
+                seq = sys.stdin.read(2)
+                if seq == "[A":  # Up arrow
+                    selected = (selected - 1) % len(options)
+                elif seq == "[B":  # Down arrow
+                    selected = (selected + 1) % len(options)
+            # Move cursor up to re-render
+            click.echo(f"\x1b[{len(options)}A", nl=False)
+            _render()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    click.echo()
+    return selected
+
+
 def _terminal_auth(endpoint: str) -> str:
     """Interactive sign-up / sign-in flow entirely in the terminal.
 
@@ -196,13 +240,8 @@ def _terminal_auth(endpoint: str) -> str:
     import requests
 
     click.echo()
-    mode = click.prompt(
-        click.style("  New to Plexus?", fg=Style.INFO)
-        + click.style(" [signup/signin]", fg=Style.DIM),
-        type=click.Choice(["signup", "signin"], case_sensitive=False),
-        default="signup",
-        show_choices=False,
-    ).lower()
+    choice = _select("New to Plexus?", ["Sign up", "Sign in"], default=0)
+    mode = "signup" if choice == 0 else "signin"
 
     email = click.prompt(
         click.style("  Email", fg=Style.INFO),
