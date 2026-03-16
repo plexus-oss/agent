@@ -491,9 +491,17 @@ def _build_panels(source_id: str, sensors: list, cameras: list) -> list:
 def _launch_auto_dashboard(api_key: str, endpoint: str, source_id: str, sensors: list, cameras: list):
     """Launch AI-powered dashboard creation in a background thread.
 
+    Skips if a dashboard_id is already saved in config (reconnect case).
     Waits for metrics to land, then calls the AI dashboard generator.
     Falls back to a basic empty dashboard if AI generation isn't ready yet.
     """
+    # Check if we already have a dashboard for this device
+    config = load_config()
+    existing_dashboard = config.get("dashboard_id")
+    if existing_dashboard:
+        dashboard_url = f"{endpoint}/dashboards/{existing_dashboard}"
+        hint(f"Dashboard {Style.ARROW} {dashboard_url}")
+        return
 
     def _create():
         import requests
@@ -506,6 +514,9 @@ def _launch_auto_dashboard(api_key: str, endpoint: str, source_id: str, sensors:
                 "Content-Type": "application/json",
             }
 
+            dashboard_id = None
+            dashboard_url = None
+
             # Try AI-powered dashboard generation
             resp = requests.post(
                 f"{endpoint}/api/auth/cli/generate-dashboard",
@@ -517,32 +528,34 @@ def _launch_auto_dashboard(api_key: str, endpoint: str, source_id: str, sensors:
             if resp.ok:
                 data = resp.json()
                 dashboard = data.get("dashboard", {})
-                dashboard_url = dashboard.get("url", f"{endpoint}/dashboards/{dashboard.get('id')}")
+                dashboard_id = dashboard.get("id")
+                dashboard_url = dashboard.get("url", f"{endpoint}/dashboards/{dashboard_id}")
+            else:
+                # If not enough metrics yet, create a basic dashboard
+                logger.debug("AI dashboard: %s %s", resp.status_code, resp.text)
+
+                resp = requests.post(
+                    f"{endpoint}/api/dashboards",
+                    headers=headers,
+                    json={"name": f"{source_id} Dashboard"},
+                    timeout=15,
+                )
+                if resp.ok:
+                    dashboard = resp.json().get("dashboard", {})
+                    dashboard_id = dashboard.get("id")
+                    if dashboard_id:
+                        dashboard_url = f"{endpoint}/dashboards/{dashboard_id}"
+
+            if dashboard_id and dashboard_url:
+                # Save to config so we don't recreate on next run
+                cfg = load_config()
+                cfg["dashboard_id"] = dashboard_id
+                save_config(cfg)
+
                 click.echo()
                 success(f"Dashboard ready {Style.ARROW} {dashboard_url}")
                 click.echo()
                 webbrowser.open(dashboard_url)
-                return
-
-            # If not enough metrics yet, create a basic dashboard
-            logger.debug("AI dashboard: %s %s", resp.status_code, resp.text)
-
-            resp = requests.post(
-                f"{endpoint}/api/dashboards",
-                headers=headers,
-                json={"name": f"{source_id} Dashboard"},
-                timeout=15,
-            )
-            if resp.ok:
-                dashboard = resp.json().get("dashboard", {})
-                dashboard_id = dashboard.get("id")
-                if dashboard_id:
-                    dashboard_url = f"{endpoint}/dashboards/{dashboard_id}"
-                    click.echo()
-                    success(f"Dashboard ready {Style.ARROW} {dashboard_url}")
-                    hint("Add panels from the dashboard editor")
-                    click.echo()
-                    webbrowser.open(dashboard_url)
 
         except Exception as e:
             logger.debug("Auto-dashboard failed: %s", e)
