@@ -239,22 +239,47 @@ class PlexusConnector:
         return self._http_session
 
     def _register_device(self, source_id: Optional[str] = None):
-        """Send a heartbeat to /api/ingest to ensure the device exists in the DB."""
+        """Send sensor readings to /api/ingest to register the device and capture schema.
+
+        The AI dashboard generator needs 3+ metrics in the schema table.
+        Sensor data normally goes WebSocket-only, so we POST the first
+        reading to /api/ingest to seed the schema.
+        """
         if not source_id or not self.api_key:
             return
         try:
-            session = self._get_http_session()
-            session.post(
-                f"{self.endpoint}/api/ingest",
-                json={"points": [{
+            points = []
+
+            # Read actual sensor data if available
+            if self.sensor_hub:
+                try:
+                    readings = self.sensor_hub.read_all()
+                    for r in readings:
+                        if isinstance(r.value, (int, float)):
+                            points.append({
+                                "source_id": source_id,
+                                "metric": r.metric,
+                                "value": r.value,
+                            })
+                except Exception as e:
+                    logger.debug(f"Sensor read for registration failed: {e}")
+
+            # Always include a heartbeat
+            if not points:
+                points.append({
                     "source_id": source_id,
                     "metric": "_heartbeat",
                     "value": 1,
-                }]},
+                })
+
+            session = self._get_http_session()
+            session.post(
+                f"{self.endpoint}/api/ingest",
+                json={"points": points},
                 timeout=5.0,
             )
         except Exception as e:
-            logger.debug(f"Device registration heartbeat failed: {e}")
+            logger.debug(f"Device registration failed: {e}")
 
     def _persist_points(self, points: List[Dict[str, Any]]) -> bool:
         """Persist data points to ClickHouse via HTTP."""
