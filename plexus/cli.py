@@ -489,58 +489,60 @@ def _build_panels(source_id: str, sensors: list, cameras: list) -> list:
 
 
 def _launch_auto_dashboard(api_key: str, endpoint: str, source_id: str, sensors: list, cameras: list):
-    """Launch auto-dashboard creation in a background thread."""
-    panels = _build_panels(source_id, sensors, cameras)
+    """Launch AI-powered dashboard creation in a background thread.
+
+    Waits for metrics to land, then calls the AI dashboard generator.
+    Falls back to a basic empty dashboard if AI generation isn't ready yet.
+    """
 
     def _create():
         import requests
         try:
-            time.sleep(3)  # Wait for first data to land
+            # Wait for data + schema capture to complete
+            time.sleep(8)
 
             headers = {
                 "x-api-key": api_key,
                 "Content-Type": "application/json",
             }
 
-            # Create dashboard
+            # Try AI-powered dashboard generation
+            resp = requests.post(
+                f"{endpoint}/api/auth/cli/generate-dashboard",
+                headers=headers,
+                json={"source_slug": source_id},
+                timeout=30,
+            )
+
+            if resp.ok:
+                data = resp.json()
+                dashboard = data.get("dashboard", {})
+                dashboard_url = dashboard.get("url", f"{endpoint}/dashboards/{dashboard.get('id')}")
+                click.echo()
+                success(f"Dashboard ready {Style.ARROW} {dashboard_url}")
+                click.echo()
+                webbrowser.open(dashboard_url)
+                return
+
+            # If not enough metrics yet, create a basic dashboard
+            logger.debug("AI dashboard: %s %s", resp.status_code, resp.text)
+
             resp = requests.post(
                 f"{endpoint}/api/dashboards",
                 headers=headers,
                 json={"name": f"{source_id} Dashboard"},
                 timeout=15,
             )
-            if not resp.ok:
-                logger.debug("Dashboard create failed: %s", resp.text)
-                return
-
-            dashboard = resp.json().get("dashboard", {})
-            dashboard_id = dashboard.get("id")
-            if not dashboard_id:
-                return
-
-            # Update with panels (if any were detected)
-            if panels:
-                resp = requests.put(
-                    f"{endpoint}/api/dashboards/{dashboard_id}",
-                    headers=headers,
-                    json={
-                        "config": {
-                            "panels": panels,
-                            "timeRange": {"type": "relative", "value": "5m"},
-                        }
-                    },
-                    timeout=15,
-                )
-                if not resp.ok:
-                    logger.debug("Dashboard update failed: %s", resp.text)
-
-            dashboard_url = f"{endpoint}/dashboards/{dashboard_id}"
-            click.echo()
-            success(f"Dashboard ready {Style.ARROW} {dashboard_url}")
-            click.echo()
-
-            # Open in browser
-            webbrowser.open(dashboard_url)
+            if resp.ok:
+                dashboard = resp.json().get("dashboard", {})
+                dashboard_id = dashboard.get("id")
+                if dashboard_id:
+                    dashboard_url = f"{endpoint}/dashboards/{dashboard_id}"
+                    click.echo()
+                    success(f"Dashboard ready {Style.ARROW} {dashboard_url}")
+                    hint("Add panels from the dashboard editor")
+                    click.echo()
+                    webbrowser.open(dashboard_url)
 
         except Exception as e:
             logger.debug("Auto-dashboard failed: %s", e)
