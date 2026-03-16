@@ -15,7 +15,6 @@ import logging
 import sys
 import time
 import threading
-import webbrowser
 from typing import Optional
 
 import click
@@ -492,8 +491,7 @@ def _launch_auto_dashboard(api_key: str, endpoint: str, source_id: str, sensors:
     """Launch AI-powered dashboard creation in a background thread.
 
     Skips if a dashboard_id is already saved in config (reconnect case).
-    Waits for metrics to land, then calls the AI dashboard generator.
-    Falls back to a basic empty dashboard if AI generation isn't ready yet.
+    Shows a spinner while generating, then prints a clickable URL.
     """
     # Check if we already have a dashboard for this device
     config = load_config()
@@ -508,6 +506,9 @@ def _launch_auto_dashboard(api_key: str, endpoint: str, source_id: str, sensors:
         try:
             # Wait for data + schema capture to complete
             time.sleep(8)
+
+            spinner = Spinner("Building dashboard...")
+            spinner.start()
 
             headers = {
                 "x-api-key": api_key,
@@ -552,10 +553,9 @@ def _launch_auto_dashboard(api_key: str, endpoint: str, source_id: str, sensors:
                 cfg["dashboard_id"] = dashboard_id
                 save_config(cfg)
 
-                click.echo()
-                success(f"Dashboard ready {Style.ARROW} {dashboard_url}")
-                click.echo()
-                webbrowser.open(dashboard_url)
+                spinner.stop(f"Dashboard ready {Style.ARROW} {dashboard_url}", success_status=True)
+            else:
+                spinner.stop("Dashboard generation failed", success_status=False)
 
         except Exception as e:
             logger.debug("Auto-dashboard failed: %s", e)

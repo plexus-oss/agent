@@ -80,8 +80,9 @@ class StreamManager:
             self.on_status("No sensors configured")
             return
 
-        mode = "Recording" if store else "Viewing"
-        self.on_status(f"{mode}: {metrics or 'all'} @ {interval_ms}ms")
+        mode = "Recording" if store else "Streaming"
+        metric_count = len(metrics) if metrics else "all"
+        self.on_status(f"{mode} {metric_count} metrics @ {interval_ms}ms")
 
         async def stream_loop():
             # Parse metric filters (strip source_id prefix if present)

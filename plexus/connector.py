@@ -425,7 +425,9 @@ class PlexusConnector:
                 return
 
             if msg_type == "error":
-                self.on_status(f"Error: {data.get('message')}")
+                err_msg = data.get("message")
+                if err_msg:
+                    self.on_status(f"Error: {err_msg}")
                 return
 
             if not self._authenticated:
