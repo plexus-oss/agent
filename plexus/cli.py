@@ -271,49 +271,17 @@ def _terminal_auth(endpoint: str) -> str:
         except Exception as e:
             spinner.stop(f"Connection failed: {e}", success_status=False)
             sys.exit(1)
-        spinner.stop()
 
         if resp.status_code == 409:
             # Account already exists — fall through to sign-in
+            spinner.stop()
             hint("Account exists, signing in instead...")
             mode = "signin"
         elif not resp.ok:
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            error(data.get("message", data.get("error", "Sign-up failed")))
+            spinner.stop(data.get("message", data.get("error", "Sign-up failed")), success_status=False)
             sys.exit(1)
         else:
-            success("Account created")
-            data = resp.json()
-
-            # Prompt for verification code
-            click.echo()
-            code = click.prompt(
-                click.style("  Verification code", fg=Style.INFO)
-                + click.style(" (check email)", fg=Style.DIM),
-                type=str,
-            ).strip()
-
-            spinner = Spinner("Verifying...")
-            spinner.start()
-            try:
-                resp = requests.post(
-                    f"{endpoint}/api/auth/cli/verify",
-                    json={
-                        "sign_up_id": data["sign_up_id"],
-                        "client_token": data["client_token"],
-                        "code": code,
-                    },
-                    timeout=30,
-                )
-            except Exception as e:
-                spinner.stop(f"Connection failed: {e}", success_status=False)
-                sys.exit(1)
-
-            if not resp.ok:
-                vdata = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-                spinner.stop(vdata.get("message", vdata.get("error", "Verification failed")), success_status=False)
-                sys.exit(1)
-
             result = resp.json()
             spinner.stop("Welcome to Plexus!", success_status=True)
 
