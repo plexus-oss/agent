@@ -10,10 +10,12 @@ Usage:
     plexus scan                    # List detected sensors
 """
 
+import getpass
 import logging
 import sys
 import time
 import threading
+import webbrowser
 from typing import Optional
 
 import click
@@ -183,6 +185,328 @@ def _mask_key(key: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Terminal Auth
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _terminal_auth(endpoint: str) -> str:
+    """Interactive sign-up / sign-in flow entirely in the terminal.
+
+    Returns the API key on success or exits on failure.
+    """
+    import requests
+
+    click.echo()
+    mode = click.prompt(
+        click.style("  New to Plexus?", fg=Style.INFO)
+        + click.style(" [signup/signin]", fg=Style.DIM),
+        type=click.Choice(["signup", "signin"], case_sensitive=False),
+        default="signup",
+        show_choices=False,
+    ).lower()
+
+    email = click.prompt(
+        click.style("  Email", fg=Style.INFO),
+        type=str,
+    ).strip()
+
+    password = getpass.getpass(
+        click.style("  Password: ", fg=Style.INFO),
+    )
+
+    if mode == "signup":
+        first_name = click.prompt(
+            click.style("  First name", fg=Style.INFO)
+            + click.style(" (optional)", fg=Style.DIM),
+            default="",
+            show_default=False,
+        ).strip() or None
+
+        spinner = Spinner("Creating account...")
+        spinner.start()
+        try:
+            resp = requests.post(
+                f"{endpoint}/api/auth/cli/signup",
+                json={"email": email, "password": password, "first_name": first_name},
+                timeout=30,
+            )
+        except Exception as e:
+            spinner.stop(f"Connection failed: {e}", success_status=False)
+            sys.exit(1)
+        spinner.stop()
+
+        if resp.status_code == 409:
+            # Account already exists — fall through to sign-in
+            hint("Account exists, signing in instead...")
+            mode = "signin"
+        elif not resp.ok:
+            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            error(data.get("message", data.get("error", "Sign-up failed")))
+            sys.exit(1)
+        else:
+            success("Account created")
+            data = resp.json()
+
+            # Prompt for verification code
+            click.echo()
+            code = click.prompt(
+                click.style("  Verification code", fg=Style.INFO)
+                + click.style(" (check email)", fg=Style.DIM),
+                type=str,
+            ).strip()
+
+            spinner = Spinner("Verifying...")
+            spinner.start()
+            try:
+                resp = requests.post(
+                    f"{endpoint}/api/auth/cli/verify",
+                    json={
+                        "sign_up_id": data["sign_up_id"],
+                        "client_token": data["client_token"],
+                        "code": code,
+                    },
+                    timeout=30,
+                )
+            except Exception as e:
+                spinner.stop(f"Connection failed: {e}", success_status=False)
+                sys.exit(1)
+
+            if not resp.ok:
+                vdata = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                spinner.stop(vdata.get("message", vdata.get("error", "Verification failed")), success_status=False)
+                sys.exit(1)
+
+            result = resp.json()
+            spinner.stop("Welcome to Plexus!", success_status=True)
+
+            api_key = result["api_key"]
+            config = load_config()
+            config["api_key"] = api_key
+            config["org_id"] = result.get("org_id")
+            save_config(config)
+            click.echo()
+            return api_key
+
+    # Sign-in flow (also handles signup → signin fallback)
+    if mode == "signin":
+        spinner = Spinner("Signing in...")
+        spinner.start()
+        try:
+            resp = requests.post(
+                f"{endpoint}/api/auth/cli/signin",
+                json={"email": email, "password": password},
+                timeout=30,
+            )
+        except Exception as e:
+            spinner.stop(f"Connection failed: {e}", success_status=False)
+            sys.exit(1)
+
+        if not resp.ok:
+            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            err_code = data.get("error", "")
+            if err_code == "no_account":
+                spinner.stop("No account found. Try signup instead.", success_status=False)
+            elif err_code == "invalid_credentials":
+                spinner.stop("Wrong password", success_status=False)
+            else:
+                spinner.stop(data.get("message", "Sign-in failed"), success_status=False)
+            sys.exit(1)
+
+        result = resp.json()
+        spinner.stop("Welcome back!", success_status=True)
+
+        api_key = result["api_key"]
+        config = load_config()
+        config["api_key"] = api_key
+        config["org_id"] = result.get("org_id")
+        save_config(config)
+        click.echo()
+        return api_key
+
+    # Should not reach here
+    error("Authentication failed")
+    sys.exit(1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auto-Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_panels(source_id: str, sensors: list, cameras: list) -> list:
+    """Map detected hardware to dashboard panel definitions."""
+    panels = []
+    y = 0
+
+    def _add(panel_type, title, metrics, w=12, h=6, config=None):
+        nonlocal y
+        panels.append({
+            "id": f"auto-{len(panels) + 1}",
+            "type": panel_type,
+            "title": title,
+            "metrics": [f"{source_id}:{m}" for m in metrics],
+            "config": config or {"decimals": 2, "showLegend": True, "showGrid": True},
+            "layout": {"x": 0, "y": y, "w": w, "h": h},
+        })
+        y += h
+
+    # Group metrics by kind
+    all_metrics = []
+    for s in sensors:
+        metrics = getattr(s, 'metrics', None) or (
+            getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None
+        )
+        if metrics:
+            all_metrics.extend(metrics)
+
+    metric_set = set(all_metrics)
+
+    # Acceleration (multi-series)
+    accel = [m for m in all_metrics if m.startswith("accel")]
+    if accel:
+        _add("line", "Acceleration", accel, config={
+            "unit": "m/s²", "decimals": 3, "showLegend": True, "showGrid": True,
+        })
+
+    # Gyroscope (multi-series)
+    gyro = [m for m in all_metrics if m.startswith("gyro")]
+    if gyro:
+        _add("line", "Gyroscope", gyro, config={
+            "unit": "°/s", "decimals": 3, "showLegend": True, "showGrid": True,
+        })
+
+    # Environment
+    for metric, title, unit in [
+        ("temperature", "Temperature", "°C"),
+        ("humidity", "Humidity", "%"),
+        ("pressure", "Pressure", "hPa"),
+    ]:
+        if metric in metric_set:
+            _add("line", title, [metric], config={
+                "unit": unit, "decimals": 1, "showLegend": True, "showGrid": True,
+            })
+
+    # Power
+    for metric, title, unit in [
+        ("voltage", "Voltage", "V"),
+        ("current", "Current", "A"),
+        ("power", "Power", "W"),
+    ]:
+        if metric in metric_set:
+            _add("line", title, [metric], config={
+                "unit": unit, "decimals": 2, "showLegend": True, "showGrid": True,
+            })
+
+    # Battery
+    if "battery" in metric_set:
+        _add("stat", "Battery", ["battery"], w=6, h=4, config={
+            "unit": "%", "decimals": 0, "showProgressBar": True,
+        })
+
+    # System stats
+    for metric, title in [
+        ("cpu.usage_pct", "CPU Usage"),
+        ("memory.used_pct", "Memory Usage"),
+    ]:
+        if metric in metric_set:
+            _add("stat", title, [metric], w=6, h=4, config={
+                "unit": "%", "decimals": 1, "showProgressBar": True,
+            })
+
+    if "cpu.temperature" in metric_set:
+        _add("line", "CPU Temperature", ["cpu.temperature"], config={
+            "unit": "°C", "decimals": 1, "showLegend": True, "showGrid": True,
+        })
+
+    # GPS
+    if "latitude" in metric_set and "longitude" in metric_set:
+        _add("map", "Location", ["latitude", "longitude"], h=8, config={
+            "latMetric": f"{source_id}:latitude",
+            "lngMetric": f"{source_id}:longitude",
+            "showPath": True,
+        })
+
+    # Cameras
+    for i, cam in enumerate(cameras):
+        cam_name = getattr(cam, "name", f"Camera {i + 1}")
+        _add("video", cam_name, [], h=8, config={
+            "cameraId": f"{source_id}:camera_{i}",
+        })
+
+    # Remaining metrics that weren't already covered
+    covered = set()
+    for p in panels:
+        for m in p["metrics"]:
+            covered.add(m.split(":")[-1])
+    remaining = [m for m in all_metrics if m not in covered]
+    for metric in remaining:
+        _add("line", metric.replace("_", " ").replace(".", " ").title(), [metric])
+
+    return panels
+
+
+def _launch_auto_dashboard(api_key: str, endpoint: str, source_id: str, sensors: list, cameras: list):
+    """Launch auto-dashboard creation in a background thread."""
+    panels = _build_panels(source_id, sensors, cameras)
+    if not panels:
+        return
+
+    def _create():
+        import requests
+        try:
+            time.sleep(3)  # Wait for first data to land
+
+            headers = {
+                "x-api-key": api_key,
+                "Content-Type": "application/json",
+            }
+
+            # Create dashboard
+            resp = requests.post(
+                f"{endpoint}/api/dashboards",
+                headers=headers,
+                json={"name": f"{source_id} Dashboard"},
+                timeout=15,
+            )
+            if not resp.ok:
+                logger.debug("Dashboard create failed: %s", resp.text)
+                return
+
+            dashboard = resp.json().get("dashboard", {})
+            dashboard_id = dashboard.get("id")
+            if not dashboard_id:
+                return
+
+            # Update with panels
+            resp = requests.put(
+                f"{endpoint}/api/dashboards/{dashboard_id}",
+                headers=headers,
+                json={
+                    "config": {
+                        "panels": panels,
+                        "timeRange": {"type": "relative", "value": "5m"},
+                    }
+                },
+                timeout=15,
+            )
+            if not resp.ok:
+                logger.debug("Dashboard update failed: %s", resp.text)
+                return
+
+            dashboard_url = f"{endpoint}/dashboards/{dashboard_id}"
+            click.echo()
+            success(f"Dashboard ready {Style.ARROW} {dashboard_url}")
+            click.echo()
+
+            # Open in browser
+            webbrowser.open(dashboard_url)
+
+        except Exception as e:
+            logger.debug("Auto-dashboard failed: %s", e)
+
+    thread = threading.Thread(target=_create, daemon=True)
+    thread.start()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CLI Commands
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -262,6 +586,7 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
 
     # ── Auth ──────────────────────────────────────────────────────────────
     api_key = get_api_key()
+    endpoint = get_endpoint()
 
     if key:
         # --key flag: save and use
@@ -274,23 +599,10 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
         # Key already in config
         success(f"API key: {_mask_key(api_key)}")
     else:
-        # Prompt for key
-        click.echo()
-        api_key = click.prompt(
-            click.style("  Paste API key", fg=Style.INFO)
-            + click.style(" (from app.plexus.company/devices)", fg=Style.DIM),
-            type=str,
-        ).strip()
-        if not api_key:
-            error("No API key provided")
-            sys.exit(1)
-        config = load_config()
-        config["api_key"] = api_key
-        save_config(config)
-        success(f"API key saved ({_mask_key(api_key)})")
+        # Terminal sign-up / sign-in flow
+        api_key = _terminal_auth(endpoint)
 
     # Validate key
-    endpoint = get_endpoint()
     spinner = Spinner("Validating API key...")
     spinner.start()
     key_valid = _validate_api_key(api_key, endpoint)
@@ -476,12 +788,17 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
         sys.exit(1)
 
     stream_label = f"Streaming {metric_count} metrics" if metric_count else "Connected"
-    click.secho(f"  {Style.CHECK} {stream_label}", fg=Style.SUCCESS)
-
-    # Dashboard link
-    source_display = name or source_id
-    hint(f"View live: app.plexus.company/devices/{source_display}")
+    click.secho(f"  {Style.CHECK} {stream_label} {Style.ARROW} {source_id}", fg=Style.SUCCESS)
     click.echo()
+
+    # ── Auto-dashboard (background) ──────────────────────────────────────
+    _launch_auto_dashboard(
+        api_key=api_key,
+        endpoint=endpoint,
+        source_id=source_id,
+        sensors=sensors,
+        cameras=cameras,
+    )
 
     # ── Start MQTT bridge in background if configured ─────────────────────
     mqtt_thread = None
