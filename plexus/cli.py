@@ -487,6 +487,46 @@ def _build_panels(source_id: str, sensors: list, cameras: list) -> list:
     return panels
 
 
+def _start_metric_readout(sensor_hub):
+    """Show live metric values in the terminal."""
+    num_metrics = 0
+
+    def _readout():
+        nonlocal num_metrics
+        while True:
+            try:
+                readings = sensor_hub.read_all()
+                if not readings:
+                    time.sleep(2)
+                    continue
+
+                # Move cursor up to overwrite previous readout
+                if num_metrics > 0:
+                    click.echo(f"\x1b[{num_metrics}A", nl=False)
+
+                num_metrics = len(readings)
+                for r in readings:
+                    name = r.metric.replace("_", " ").replace(".", " > ")
+                    if isinstance(r.value, float):
+                        val = f"{r.value:.1f}"
+                    else:
+                        val = str(r.value)
+
+                    line = (
+                        click.style(f"  {name:<24}", fg=Style.DIM)
+                        + click.style(val, bold=True)
+                    )
+                    # Pad to clear previous content
+                    click.echo(f"{line:<60}")
+
+            except Exception:
+                pass
+            time.sleep(2)
+
+    thread = threading.Thread(target=_readout, daemon=True)
+    thread.start()
+
+
 def _launch_auto_dashboard(api_key: str, endpoint: str, source_id: str, sensors: list, cameras: list):
     """Launch AI-powered dashboard creation in a background thread.
 
@@ -904,6 +944,10 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
         sensors=sensors,
         cameras=cameras,
     )
+
+    # ── Live metric readout (background) ────────────────────────────────
+    if sensor_hub and not live:
+        _start_metric_readout(sensor_hub)
 
     # ── Start MQTT bridge in background if configured ─────────────────────
     mqtt_thread = None
