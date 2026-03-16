@@ -238,6 +238,24 @@ class PlexusConnector:
             self._http_session.headers["User-Agent"] = f"plexus-agent/{__version__}"
         return self._http_session
 
+    def _register_device(self, source_id: Optional[str] = None):
+        """Send a heartbeat to /api/ingest to ensure the device exists in the DB."""
+        if not source_id or not self.api_key:
+            return
+        try:
+            session = self._get_http_session()
+            session.post(
+                f"{self.endpoint}/api/ingest",
+                json={"points": [{
+                    "source_id": source_id,
+                    "metric": "_heartbeat",
+                    "value": 1,
+                }]},
+                timeout=5.0,
+            )
+        except Exception as e:
+            logger.debug(f"Device registration heartbeat failed: {e}")
+
     def _persist_points(self, points: List[Dict[str, Any]]) -> bool:
         """Persist data points to ClickHouse via HTTP."""
         if not self.api_key:
@@ -377,6 +395,8 @@ class PlexusConnector:
             if msg_type == "authenticated":
                 self._authenticated = True
                 self.on_status(f"Connected as {data.get('source_id')}")
+                # Register device via /api/ingest so it appears in the UI
+                self._register_device(data.get("source_id"))
                 return
 
             if msg_type == "error":
