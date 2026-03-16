@@ -28,5 +28,5 @@ from plexus.client import Plexus
 from plexus.config import load_config, save_config
 from plexus.typed_commands import param, CommandRegistry
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 __all__ = ["Plexus", "param", "CommandRegistry", "load_config", "save_config"]

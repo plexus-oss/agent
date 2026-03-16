@@ -1,6 +1,6 @@
 # Plexus Agent
 
-**Open-source Python SDK for IoT observability and hardware telemetry.** Stream sensor data, CAN bus, MAVLink, cameras, and MQTT from any device to [Plexus](https://plexus.company) — the HardwareOps platform for real-time monitoring and fleet management.
+**Open-source Python SDK for hardware observability and telemetry.** Stream sensor data, CAN bus, MAVLink, cameras, and MQTT from any device to [Plexus](https://plexus.company) — the HardwareOps platform for real-time monitoring and fleet management.
 
 [![PyPI](https://img.shields.io/pypi/v/plexus-agent)](https://pypi.org/project/plexus-agent/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
@@ -122,8 +122,8 @@ See [API.md](https://github.com/plexus-oss/agent/blob/main/API.md) for curl, Jav
 
 ## Authentication
 
-| Method            | How to get it                                             | Used by                            |
-| ----------------- | --------------------------------------------------------- | ---------------------------------- |
+| Method            | How to get it                                             | Used by                              |
+| ----------------- | --------------------------------------------------------- | ------------------------------------ |
 | API key (`plx_*`) | Dashboard → Devices → Add Device, or Settings → Developer | `plexus start` and `Plexus()` client |
 
 Two ways to authenticate:
@@ -166,7 +166,7 @@ plexus start --name "robot-01"            # Name the device
 
 | Flag             | Description                                         |
 | ---------------- | --------------------------------------------------- |
-| `-k, --key`      | API key (skips interactive auth prompt)              |
+| `-k, --key`      | API key (skips interactive auth prompt)             |
 | `-n, --name`     | Device name for fleet identification                |
 | `--slug`         | Device slug (source ID) from dashboard              |
 | `--org`          | Organization ID from dashboard                      |
