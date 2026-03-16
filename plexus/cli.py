@@ -453,8 +453,6 @@ def _build_panels(source_id: str, sensors: list, cameras: list) -> list:
 def _launch_auto_dashboard(api_key: str, endpoint: str, source_id: str, sensors: list, cameras: list):
     """Launch auto-dashboard creation in a background thread."""
     panels = _build_panels(source_id, sensors, cameras)
-    if not panels:
-        return
 
     def _create():
         import requests
@@ -482,21 +480,21 @@ def _launch_auto_dashboard(api_key: str, endpoint: str, source_id: str, sensors:
             if not dashboard_id:
                 return
 
-            # Update with panels
-            resp = requests.put(
-                f"{endpoint}/api/dashboards/{dashboard_id}",
-                headers=headers,
-                json={
-                    "config": {
-                        "panels": panels,
-                        "timeRange": {"type": "relative", "value": "5m"},
-                    }
-                },
-                timeout=15,
-            )
-            if not resp.ok:
-                logger.debug("Dashboard update failed: %s", resp.text)
-                return
+            # Update with panels (if any were detected)
+            if panels:
+                resp = requests.put(
+                    f"{endpoint}/api/dashboards/{dashboard_id}",
+                    headers=headers,
+                    json={
+                        "config": {
+                            "panels": panels,
+                            "timeRange": {"type": "relative", "value": "5m"},
+                        }
+                    },
+                    timeout=15,
+                )
+                if not resp.ok:
+                    logger.debug("Dashboard update failed: %s", resp.text)
 
             dashboard_url = f"{endpoint}/dashboards/{dashboard_id}"
             click.echo()
