@@ -5,9 +5,10 @@ Shows real-time telemetry table with metric names, current values,
 rates, buffer status, and connection state. Like htop for your hardware.
 
 Usage:
-    plexus start --live
+    plexus start  (TUI is the default when Rich is available)
+    plexus start --headless  (disable TUI)
 
-Requires: pip install plexus-agent[tui] (installs 'rich')
+Optional: pip install plexus-agent[tui] (installs 'rich' for TUI)
 """
 
 import time
@@ -66,6 +67,8 @@ class DashboardState:
     total_errors: int = 0
     buffer_size: int = 0
     start_time: float = field(default_factory=time.time)
+    sort_mode: str = "name"  # "name", "rate", "recent"
+    paused: bool = False
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def update_metric(self, name: str, value, timestamp: Optional[float] = None):
@@ -86,6 +89,14 @@ class DashboardState:
     def increment_errors(self):
         with self._lock:
             self.total_errors += 1
+
+    def cycle_sort(self):
+        modes = ["name", "rate", "recent"]
+        idx = modes.index(self.sort_mode)
+        self.sort_mode = modes[(idx + 1) % len(modes)]
+
+    def toggle_pause(self):
+        self.paused = not self.paused
 
     @property
     def uptime(self) -> str:
@@ -183,7 +194,12 @@ def build_dashboard(state: DashboardState) -> Table:
                 "[dim]Waiting for data...[/dim]", "", "", "", ""
             )
         else:
-            sorted_metrics = sorted(state.metrics.values(), key=lambda m: m.name)
+            if state.sort_mode == "rate":
+                sorted_metrics = sorted(state.metrics.values(), key=lambda m: m.rate_hz, reverse=True)
+            elif state.sort_mode == "recent":
+                sorted_metrics = sorted(state.metrics.values(), key=lambda m: m.last_update, reverse=True)
+            else:
+                sorted_metrics = sorted(state.metrics.values(), key=lambda m: m.name)
             for metric in sorted_metrics:
                 # Staleness check
                 age = time.time() - metric.last_update if metric.last_update > 0 else 999
@@ -204,7 +220,58 @@ def build_dashboard(state: DashboardState) -> Table:
                     status_cell,
                 )
 
+    # Footer with help and sort indicator
+    sort_label = {"name": "name", "rate": "rate ↓", "recent": "recent ↓"}[state.sort_mode]
+    pause_label = "▐▐ paused" if state.paused else ""
+    table.caption = f"  [dim]q[/dim] quit  [dim]p[/dim] pause  [dim]s[/dim] sort:{sort_label}  [dim]?[/dim] help  {pause_label}"
+    table.caption_style = "dim"
+
     return table
+
+
+class _KeyReader:
+    """Non-blocking keyboard reader for TUI shortcuts."""
+
+    def __init__(self, state: DashboardState, stop_event: threading.Event):
+        self.state = state
+        self.stop_event = stop_event
+        self._show_help = False
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        import sys
+        try:
+            import termios
+            import tty
+        except ImportError:
+            return  # Not a Unix terminal
+
+        fd = sys.stdin.fileno()
+        try:
+            old = termios.tcgetattr(fd)
+        except termios.error:
+            return
+
+        try:
+            tty.setcbreak(fd)
+            while not self.stop_event.is_set():
+                import select
+                if select.select([sys.stdin], [], [], 0.1)[0]:
+                    ch = sys.stdin.read(1)
+                    if ch == "q":
+                        self.stop_event.set()
+                    elif ch == "p":
+                        self.state.toggle_pause()
+                    elif ch == "s":
+                        self.state.cycle_sort()
+                    elif ch == "?":
+                        self._show_help = not self._show_help
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
 class LiveDashboard:
@@ -229,6 +296,8 @@ class LiveDashboard:
         self.state = DashboardState()
         self.console = Console()
         self._live: Optional[Live] = None
+        self._stop_event = threading.Event()
+        self._key_reader: Optional[_KeyReader] = None
 
     def on_status(self, msg: str):
         """Status callback for the connector."""
@@ -264,10 +333,15 @@ class LiveDashboard:
                           Will be run in a background thread.
         """
         self.state = DashboardState()
+        self._stop_event.clear()
 
         # Run connector in background thread
         connector_thread = threading.Thread(target=connector_fn, daemon=True)
         connector_thread.start()
+
+        # Start keyboard reader
+        self._key_reader = _KeyReader(self.state, self._stop_event)
+        self._key_reader.start()
 
         try:
             with Live(
@@ -277,10 +351,12 @@ class LiveDashboard:
                 screen=False,
             ) as live:
                 self._live = live
-                while connector_thread.is_alive():
-                    live.update(build_dashboard(self.state))
+                while connector_thread.is_alive() and not self._stop_event.is_set():
+                    if not self.state.paused:
+                        live.update(build_dashboard(self.state))
                     time.sleep(0.25)
         except KeyboardInterrupt:
             pass
         finally:
+            self._stop_event.set()
             self._live = None

@@ -371,6 +371,89 @@ def _terminal_auth(endpoint: str) -> str:
     sys.exit(1)
 
 
+def _startup_wizard(endpoint: str) -> dict:
+    """Interactive startup wizard for first-time users.
+
+    Returns dict with api_key, sensors, cameras so start() can skip
+    redundant detection steps.
+    """
+    from plexus.detect import detect_sensors, detect_cameras
+
+    # ── Welcome box ──
+    device_type = _detect_device_type()
+    click.echo()
+    click.secho(f"  ┌{'─' * (Style.WIDTH - 2)}┐", fg=Style.DIM)
+    click.secho(f"  │{'Welcome to Plexus':^{Style.WIDTH - 2}}│", fg="white", bold=True)
+    click.secho(f"  │{f'Device: {device_type}':^{Style.WIDTH - 2}}│", fg=Style.DIM)
+    click.secho(f"  │{f'Version: {__version__}':^{Style.WIDTH - 2}}│", fg=Style.DIM)
+    click.secho(f"  └{'─' * (Style.WIDTH - 2)}┘", fg=Style.DIM)
+    click.echo()
+
+    # ── Step 1: Auth ──
+    click.secho("  Step 1/3  Authentication", bold=True)
+    api_key = _terminal_auth(endpoint)
+
+    # ── Step 2: Hardware scan ──
+    click.secho("  Step 2/3  Hardware Scan", bold=True)
+    click.echo()
+
+    sensors = []
+    cameras = []
+    sensor_hub = None
+
+    spinner = Spinner("Scanning for sensors...")
+    spinner.start()
+    try:
+        sensor_hub, sensors = detect_sensors(1)
+        spinner.stop(f"Found {len(sensors)} sensor{'s' if len(sensors) != 1 else ''}", success_status=True)
+    except Exception:
+        spinner.stop("No I2C sensors found", success_status=False)
+
+    spinner = Spinner("Scanning for cameras...")
+    spinner.start()
+    try:
+        _, cameras = detect_cameras()
+        spinner.stop(f"Found {len(cameras)} camera{'s' if len(cameras) != 1 else ''}", success_status=True)
+    except Exception:
+        spinner.stop("No cameras found", success_status=False)
+
+    if sensors:
+        click.echo()
+        for s in sensors:
+            s_metrics = getattr(s, 'metrics', None) or (
+                getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None
+            )
+            metrics_str = ", ".join(s_metrics) if s_metrics else ""
+            click.echo(
+                f"    {Style.CHECK} "
+                + click.style(f"{s.name:<12}", fg=Style.SUCCESS)
+                + click.style(metrics_str, fg=Style.DIM)
+            )
+
+    click.echo()
+
+    # ── Step 3: Ready ──
+    metric_count = 0
+    for s in sensors:
+        metrics = getattr(s, 'metrics', None) or (
+            getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None
+        )
+        metric_count += len(metrics) if metrics else 1
+
+    click.secho("  Step 3/3  Ready", bold=True)
+    click.echo()
+    label = f"Streaming {metric_count} metrics" if metric_count else "Ready to connect"
+    click.echo(f"  {label} — press Enter to start")
+    click.pause("")
+
+    return {
+        "api_key": api_key,
+        "sensors": sensors,
+        "cameras": cameras,
+        "sensor_hub": sensor_hub,
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Auto-Dashboard
 # ─────────────────────────────────────────────────────────────────────────────
@@ -637,6 +720,17 @@ def main():
 # plexus start
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _should_use_tui(headless: bool) -> bool:
+    """Determine if TUI should be used based on flags and environment."""
+    if headless or not sys.stdout.isatty():
+        return False
+    try:
+        import rich  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 @main.command()
 @click.option("--key", "-k", help="API key from dashboard")
 @click.option("--name", "-n", help="Device name for identification")
@@ -649,8 +743,9 @@ def main():
 @click.option("--mqtt", "mqtt_broker", default=None, help="MQTT broker to bridge (e.g. localhost:1883)")
 @click.option("--mqtt-topic", default="sensors/#", help="MQTT topic to subscribe to")
 @click.option("--auto-install", is_flag=True, help="Auto-install missing dependencies")
-@click.option("--live", is_flag=True, help="Show live terminal dashboard with real-time metrics")
-def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Optional[str], bus: int, no_sensors: bool, no_cameras: bool, sensor_types: tuple, mqtt_broker: Optional[str], mqtt_topic: str, auto_install: bool, live: bool):
+@click.option("--headless", is_flag=True, help="Disable TUI, plain text output only")
+@click.option("--live", is_flag=True, hidden=True, help="[Deprecated] Use default TUI mode instead")
+def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Optional[str], bus: int, no_sensors: bool, no_cameras: bool, sensor_types: tuple, mqtt_broker: Optional[str], mqtt_topic: str, auto_install: bool, headless: bool, live: bool):
     """
     Set up and start streaming in one command.
 
@@ -665,7 +760,7 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
         plexus start --sensor system                        # System health metrics
         plexus start --no-sensors --no-cameras              # Skip hardware detection
         plexus start --mqtt localhost:1883                   # Bridge MQTT data
-        plexus start --live                                  # Live terminal dashboard
+        plexus start --headless                              # Plain text output only
     """
     from plexus.connector import run_connector
     from plexus.detect import detect_sensors, detect_cameras, detect_can
@@ -677,7 +772,23 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
 
     # Determine if we should run in non-interactive mode:
     # skip sensor selection prompt when explicit flags are used
-    non_interactive = bool(no_sensors or no_cameras or sensor_types or mqtt_broker)
+    non_interactive = bool(no_sensors or no_cameras or sensor_types or mqtt_broker or headless)
+
+    # ── TUI mode detection ────────────────────────────────────────────────
+    use_tui = _should_use_tui(headless)
+
+    if live:
+        # --live is deprecated, TUI is now the default
+        click.secho("  Note: --live is deprecated. TUI is now the default.", fg=Style.DIM)
+        click.secho("  Use --headless to disable.", fg=Style.DIM)
+        click.echo()
+        if not headless:
+            use_tui = _should_use_tui(False)  # respect --live intent
+
+    if not use_tui and sys.stdout.isatty() and not headless:
+        # Rich not installed but interactive terminal
+        click.secho("  Hint: pip install plexus-agent[tui] for live dashboard", fg=Style.DIM)
+        click.echo()
 
     # ── Welcome ───────────────────────────────────────────────────────────
     header(f"Plexus Agent v{__version__}")
@@ -685,6 +796,12 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
     # ── Auth ──────────────────────────────────────────────────────────────
     api_key = get_api_key()
     endpoint = get_endpoint()
+
+    # ── Startup wizard for first-time users ──────────────────────────────
+    wizard_result = None
+    if not api_key and not non_interactive and sys.stdout.isatty():
+        wizard_result = _startup_wizard(endpoint)
+        api_key = wizard_result["api_key"]
 
     if key:
         # --key flag: save and use
@@ -712,6 +829,99 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
         hint("Check your key at app.plexus.company/devices")
         click.echo()
         sys.exit(1)
+
+    # If wizard already ran, skip redundant auth/detection
+    if wizard_result:
+        sensors = wizard_result["sensors"]
+        cameras = wizard_result["cameras"]
+        sensor_hub = wizard_result["sensor_hub"]
+        camera_hub = None
+        can_adapters, up_can, down_can = [], [], []
+        mqtt_adapter = None
+        mqtt_error = None
+
+        # Jump to summary
+        source_id = get_source_id()
+        if name:
+            config = load_config()
+            config["source_name"] = name
+            save_config(config)
+
+        metric_count = 0
+        for s in sensors:
+            metrics = getattr(s, 'metrics', None) or (
+                getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None
+            )
+            metric_count += len(metrics) if metrics else 1
+
+        stream_label = f"Streaming {metric_count} metrics" if metric_count else "Connected"
+        click.secho(f"  {Style.CHECK} {stream_label} {Style.ARROW} {source_id}", fg=Style.SUCCESS)
+        click.echo()
+
+        _launch_auto_dashboard(
+            api_key=api_key,
+            endpoint=endpoint,
+            source_id=source_id,
+            sensors=sensors,
+            cameras=cameras,
+        )
+
+        if sensor_hub and not use_tui:
+            _start_metric_readout(sensor_hub)
+
+        # Go to connector launch
+        if use_tui:
+            try:
+                from plexus.tui import LiveDashboard
+                dashboard = LiveDashboard()
+
+                def _connector_fn():
+                    from plexus.connector import run_connector
+                    run_connector(
+                        api_key=api_key,
+                        endpoint=endpoint,
+                        on_status=dashboard.wrap_status_callback(status_line),
+                        sensor_hub=sensor_hub,
+                        camera_hub=camera_hub,
+                        can_adapters=can_adapters,
+                    )
+
+                dashboard.run(_connector_fn)
+            except ImportError as e:
+                warning(str(e).strip())
+                hint("Install with: pip install plexus-agent[tui]")
+                from plexus.connector import run_connector
+                try:
+                    run_connector(
+                        api_key=api_key,
+                        endpoint=endpoint,
+                        on_status=status_line,
+                        sensor_hub=sensor_hub,
+                        camera_hub=camera_hub,
+                        can_adapters=can_adapters,
+                    )
+                except KeyboardInterrupt:
+                    click.echo()
+                    status_line("Disconnected")
+                    click.echo()
+            except KeyboardInterrupt:
+                pass
+        else:
+            from plexus.connector import run_connector
+            try:
+                run_connector(
+                    api_key=api_key,
+                    endpoint=endpoint,
+                    on_status=status_line,
+                    sensor_hub=sensor_hub,
+                    camera_hub=camera_hub,
+                    can_adapters=can_adapters,
+                )
+            except KeyboardInterrupt:
+                click.echo()
+                status_line("Disconnected")
+                click.echo()
+        return
 
     # ── Slug / Org ──────────────────────────────────────────────────────
     if slug or org:
@@ -946,7 +1156,7 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
     )
 
     # ── Live metric readout (background) ────────────────────────────────
-    if sensor_hub and not live:
+    if sensor_hub and not use_tui:
         _start_metric_readout(sensor_hub)
 
     # ── Start MQTT bridge in background if configured ─────────────────────
@@ -971,8 +1181,8 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
             warning(f"MQTT connect failed: {e}")
 
     # ── Start connector ───────────────────────────────────────────────────
-    if live:
-        # Live TUI mode
+    if use_tui:
+        # TUI mode (default when Rich is available)
         try:
             from plexus.tui import LiveDashboard
             dashboard = LiveDashboard()
@@ -991,15 +1201,27 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
         except ImportError as e:
             warning(str(e).strip())
             hint("Install with: pip install plexus-agent[tui]")
-            click.echo()
-            sys.exit(1)
+            # Fall back to standard mode instead of exiting
+            try:
+                run_connector(
+                    api_key=api_key,
+                    endpoint=endpoint,
+                    on_status=status_line,
+                    sensor_hub=sensor_hub,
+                    camera_hub=camera_hub,
+                    can_adapters=can_adapters,
+                )
+            except KeyboardInterrupt:
+                click.echo()
+                status_line("Disconnected")
+                click.echo()
         except KeyboardInterrupt:
             pass
         finally:
             if mqtt_adapter:
                 mqtt_adapter.disconnect()
     else:
-        # Standard mode
+        # Headless mode
         try:
             run_connector(
                 api_key=api_key,
