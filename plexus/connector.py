@@ -519,7 +519,11 @@ def run_connector(
     def _handle_sigterm(signum, frame):
         connector.disconnect()
 
-    signal.signal(signal.SIGTERM, _handle_sigterm)
+    # Signal handlers can only be set in the main thread (TUI runs
+    # the connector in a background thread, so skip it there).
+    import threading
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, _handle_sigterm)
 
     try:
         asyncio.run(connector.connect())
