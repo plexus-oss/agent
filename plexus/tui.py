@@ -1,8 +1,8 @@
 """
 Live terminal dashboard for Plexus agent.
 
-Shows real-time telemetry table with metric names, current values,
-rates, buffer status, and connection state. Like htop for your hardware.
+Full-screen, keyboard-driven TUI for monitoring device telemetry.
+Like htop for your hardware.
 
 Usage:
     plexus start  (TUI is the default when Rich is available)
@@ -19,9 +19,10 @@ from typing import Dict, List, Optional, Callable
 # Rich is optional — imported lazily
 _rich_available = False
 try:
-    from rich.console import Console
+    from rich.console import Console, Group
     from rich.live import Live
     from rich.table import Table
+    from rich.text import Text
     _rich_available = True
 except ImportError:
     pass
@@ -69,6 +70,7 @@ class DashboardState:
     start_time: float = field(default_factory=time.time)
     sort_mode: str = "name"  # "name", "rate", "recent"
     paused: bool = False
+    device_name: str = ""
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def update_metric(self, name: str, value, timestamp: Optional[float] = None):
@@ -126,7 +128,7 @@ def _format_value(value) -> str:
         elif abs(value) < 1000:
             return f"{value:.1f}"
         else:
-            return f"{value:.0f}"
+            return f"{value:,.0f}"
     elif isinstance(value, bool):
         return "true" if value else "false"
     elif isinstance(value, int):
@@ -143,55 +145,69 @@ def _format_value(value) -> str:
 def _format_rate(hz: float) -> str:
     """Format a rate for display."""
     if hz == 0:
-        return "-"
+        return ""
     elif hz < 1:
-        return f"{hz:.2f}Hz"
-    elif hz < 100:
-        return f"{hz:.0f}Hz"
+        return f"{hz:.1f} Hz"
     else:
-        return f"{hz:.0f}Hz"
+        return f"{hz:.0f} Hz"
 
 
-def _status_indicator(status: str) -> str:
-    """Get a status indicator string."""
-    indicators = {
-        "connecting": "[yellow]connecting[/yellow]",
-        "connected": "[green]streaming[/green]",
-        "authenticated": "[green]streaming[/green]",
-        "disconnected": "[red]disconnected[/red]",
-        "buffering": "[yellow]buffering[/yellow]",
-        "error": "[red]error[/red]",
+def build_dashboard(state: DashboardState) -> Group:
+    """Build the full-screen dashboard layout."""
+    from plexus import __version__
+
+    # ── Status dot ──
+    status_map = {
+        "connecting": ("yellow", "connecting"),
+        "connected": ("green", "streaming"),
+        "authenticated": ("green", "streaming"),
+        "disconnected": ("red", "disconnected"),
+        "buffering": ("yellow", "buffering"),
+        "error": ("red", "error"),
     }
-    return indicators.get(status, f"[dim]{status}[/dim]")
+    color, label = status_map.get(state.connection_status, ("dim", state.connection_status))
 
+    # ── Header line ──
+    header = Text()
+    header.append("  Plexus", style="bold")
+    header.append(f"  v{__version__}", style="dim")
+    header.append("    ")
+    header.append("●", style=color)
+    header.append(f" {label}", style=color)
+    header.append(f"    {state.uptime}", style="dim")
+    if state.paused:
+        header.append("    paused", style="yellow bold")
 
-def build_dashboard(state: DashboardState) -> Table:
-    """Build the Rich table for display."""
-    # Header info
-    status = _status_indicator(state.connection_status)
-    pts_min = f"{state.points_per_min:.0f}" if state.points_per_min > 0 else "0"
+    # ── Stats bar ──
+    pts = f"{state.points_per_min:.0f}" if state.points_per_min > 0 else "0"
+    stats = Text()
+    stats.append(f"  {state.total_sent} pts", style="dim")
+    stats.append(f"   {pts}/min", style="dim")
+    if state.total_errors > 0:
+        stats.append(f"   {state.total_errors} errors", style="red dim")
+    if state.buffer_size > 0:
+        stats.append(f"   buf:{state.buffer_size}", style="yellow dim")
 
-    # Main table
+    # ── Metric table ──
     table = Table(
-        title=f"  Streaming to Plexus  {status}  {pts_min} pts/min  {state.total_errors} errors  {state.uptime}",
-        title_style="bold",
         show_header=True,
-        header_style="bold dim",
-        border_style="dim",
+        header_style="dim",
+        box=None,
         pad_edge=True,
-        expand=True,
+        padding=(0, 2),
+        expand=False,
+        min_width=50,
     )
 
-    table.add_column("Metric", style="cyan", no_wrap=True, ratio=3)
-    table.add_column("Value", justify="right", ratio=2)
-    table.add_column("Rate", justify="right", style="dim", ratio=1)
-    table.add_column("Buffer", justify="right", style="dim", ratio=1)
-    table.add_column("Status", justify="center", ratio=1)
+    table.add_column("  Metric", style="cyan", no_wrap=True, min_width=24)
+    table.add_column("Value", justify="right", min_width=12)
+    table.add_column("Rate", justify="right", style="dim", min_width=8)
+    table.add_column("", min_width=3)  # status dot
 
     with state._lock:
         if not state.metrics:
             table.add_row(
-                "[dim]Waiting for data...[/dim]", "", "", "", ""
+                "  [dim]waiting for data...[/dim]", "", "", ""
             )
         else:
             if state.sort_mode == "rate":
@@ -200,33 +216,39 @@ def build_dashboard(state: DashboardState) -> Table:
                 sorted_metrics = sorted(state.metrics.values(), key=lambda m: m.last_update, reverse=True)
             else:
                 sorted_metrics = sorted(state.metrics.values(), key=lambda m: m.name)
+
             for metric in sorted_metrics:
-                # Staleness check
                 age = time.time() - metric.last_update if metric.last_update > 0 else 999
                 if age < 5:
-                    status_cell = "[green]streaming[/green]"
+                    dot = "[green]●[/green]"
                 elif age < 30:
-                    status_cell = "[yellow]stale[/yellow]"
+                    dot = "[yellow]●[/yellow]"
                 else:
-                    status_cell = "[red]timeout[/red]"
+                    dot = "[red]●[/red]"
 
-                buffer_cell = str(state.buffer_size) if state.buffer_size > 0 else "0"
+                # Clean metric name: cpu.temperature → cpu temperature
+                display_name = "  " + metric.name.replace("_", " ").replace(".", " > ")
 
                 table.add_row(
-                    metric.name,
-                    metric.value,
+                    display_name,
+                    f"[bold]{metric.value}[/bold]",
                     _format_rate(metric.rate_hz),
-                    buffer_cell,
-                    status_cell,
+                    dot,
                 )
 
-    # Footer with help and sort indicator
-    sort_label = {"name": "name", "rate": "rate ↓", "recent": "recent ↓"}[state.sort_mode]
-    pause_label = "▐▐ paused" if state.paused else ""
-    table.caption = f"  [dim]q[/dim] quit  [dim]p[/dim] pause  [dim]s[/dim] sort:{sort_label}  [dim]?[/dim] help  {pause_label}"
-    table.caption_style = "dim"
+    # ── Footer ──
+    sort_labels = {"name": "name", "rate": "rate", "recent": "recent"}
+    footer = Text()
+    footer.append("  q", style="bold dim")
+    footer.append(" quit  ", style="dim")
+    footer.append("p", style="bold dim")
+    footer.append(" pause  ", style="dim")
+    footer.append("s", style="bold dim")
+    footer.append(f" sort:{sort_labels[state.sort_mode]}  ", style="dim")
 
-    return table
+    # Compose the full layout
+    spacer = Text("")
+    return Group(header, stats, spacer, table, spacer, footer)
 
 
 class _KeyReader:
@@ -235,7 +257,6 @@ class _KeyReader:
     def __init__(self, state: DashboardState, stop_event: threading.Event):
         self.state = state
         self.stop_event = stop_event
-        self._show_help = False
         self._thread: Optional[threading.Thread] = None
 
     def start(self):
@@ -268,18 +289,16 @@ class _KeyReader:
                         self.state.toggle_pause()
                     elif ch == "s":
                         self.state.cycle_sort()
-                    elif ch == "?":
-                        self._show_help = not self._show_help
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
 class LiveDashboard:
     """
-    Live terminal dashboard that wraps a PlexusConnector.
+    Full-screen live terminal dashboard.
 
-    Intercepts status updates and metric sends to display a
-    real-time table in the terminal.
+    Takes over the terminal with an alternate screen buffer,
+    reads sensors locally, and displays real-time metrics.
     """
 
     def __init__(self, sensor_hub=None):
@@ -302,7 +321,6 @@ class LiveDashboard:
 
     def on_status(self, msg: str):
         """Status callback for the connector."""
-        # Parse status messages to update dashboard state
         lower = msg.lower()
         if "connected as" in lower or "authenticated" in lower:
             self.state.set_status("connected")
@@ -314,7 +332,7 @@ class LiveDashboard:
             self.state.set_status("connecting")
 
     def on_metric(self, name: str, value, timestamp: Optional[float] = None):
-        """Called when a metric is sent (hook into streaming)."""
+        """Called when a metric is sent."""
         self.state.update_metric(name, value, timestamp)
 
     def wrap_status_callback(self, original_callback: Optional[Callable] = None) -> Callable:
@@ -347,9 +365,6 @@ class LiveDashboard:
         self.state = DashboardState()
         self._stop_event.clear()
 
-        # Clear terminal so setup output doesn't garble the TUI
-        self.console.clear()
-
         # Run connector in background thread
         connector_thread = threading.Thread(target=connector_fn, daemon=True)
         connector_thread.start()
@@ -368,7 +383,7 @@ class LiveDashboard:
                 build_dashboard(self.state),
                 console=self.console,
                 refresh_per_second=4,
-                screen=False,
+                screen=True,  # Alternate screen buffer — hides setup output
             ) as live:
                 self._live = live
                 while connector_thread.is_alive() and not self._stop_event.is_set():
