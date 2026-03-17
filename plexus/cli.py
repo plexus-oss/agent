@@ -873,7 +873,7 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
         if use_tui:
             try:
                 from plexus.tui import LiveDashboard
-                dashboard = LiveDashboard()
+                dashboard = LiveDashboard(sensor_hub=sensor_hub)
 
                 def _connector_fn():
                     from plexus.connector import run_connector
@@ -1185,7 +1185,7 @@ def start(key: Optional[str], name: Optional[str], slug: Optional[str], org: Opt
         # TUI mode (default when Rich is available)
         try:
             from plexus.tui import LiveDashboard
-            dashboard = LiveDashboard()
+            dashboard = LiveDashboard(sensor_hub=sensor_hub)
 
             def _connector_fn():
                 run_connector(

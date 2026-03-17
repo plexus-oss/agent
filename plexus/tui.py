@@ -282,7 +282,7 @@ class LiveDashboard:
     real-time table in the terminal.
     """
 
-    def __init__(self):
+    def __init__(self, sensor_hub=None):
         if not _rich_available:
             raise ImportError(
                 "\n"
@@ -295,6 +295,7 @@ class LiveDashboard:
             )
         self.state = DashboardState()
         self.console = Console()
+        self.sensor_hub = sensor_hub
         self._live: Optional[Live] = None
         self._stop_event = threading.Event()
         self._key_reader: Optional[_KeyReader] = None
@@ -324,6 +325,17 @@ class LiveDashboard:
                 original_callback(msg)
         return wrapped
 
+    def _sensor_read_loop(self):
+        """Read sensors locally and feed metrics into the TUI state."""
+        while not self._stop_event.is_set():
+            try:
+                readings = self.sensor_hub.read_all()
+                for r in readings:
+                    self.on_metric(r.metric, r.value)
+            except Exception:
+                pass
+            time.sleep(1)
+
     def run(self, connector_fn: Callable):
         """
         Run the live dashboard with a connector function.
@@ -335,9 +347,17 @@ class LiveDashboard:
         self.state = DashboardState()
         self._stop_event.clear()
 
+        # Clear terminal so setup output doesn't garble the TUI
+        self.console.clear()
+
         # Run connector in background thread
         connector_thread = threading.Thread(target=connector_fn, daemon=True)
         connector_thread.start()
+
+        # Start local sensor reader to feed metrics into TUI
+        if self.sensor_hub:
+            sensor_thread = threading.Thread(target=self._sensor_read_loop, daemon=True)
+            sensor_thread.start()
 
         # Start keyboard reader
         self._key_reader = _KeyReader(self.state, self._stop_event)
