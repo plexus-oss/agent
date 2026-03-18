@@ -13,6 +13,7 @@ Optional: pip install plexus-agent[tui] (installs 'rich' for TUI)
 
 import time
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Callable
 
@@ -23,10 +24,57 @@ try:
     from rich.live import Live
     from rich.table import Table
     from rich.text import Text
+    from rich.panel import Panel
+    from rich import box
     _rich_available = True
 except ImportError:
     pass
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sparkline
+# ─────────────────────────────────────────────────────────────────────────────
+
+SPARK_CHARS = " ▁▂▃▄▅▆▇█"
+
+
+def _sparkline(values: List[float], width: int = 16) -> str:
+    """Render a mini sparkline chart from recent values."""
+    if not values:
+        return " " * width
+
+    # Take last `width` values
+    recent = values[-width:]
+    lo, hi = min(recent), max(recent)
+    spread = hi - lo
+
+    out = []
+    for v in recent:
+        if spread == 0:
+            idx = 4  # middle bar when constant
+        else:
+            idx = int((v - lo) / spread * (len(SPARK_CHARS) - 1))
+        out.append(SPARK_CHARS[idx])
+
+    # Pad left if fewer values than width
+    return (" " * (width - len(out))) + "".join(out)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Logo
+# ─────────────────────────────────────────────────────────────────────────────
+
+LOGO = """\
+         ┌─┐
+    ┌────┤ ├────┐
+    │  plexus   │
+    └────┤ ├────┘
+         └─┘"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# State
+# ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class MetricState:
@@ -38,6 +86,7 @@ class MetricState:
     last_update: float = 0.0
     update_count: int = 0
     _timestamps: List[float] = field(default_factory=list)
+    _history: deque = field(default_factory=lambda: deque(maxlen=60))
 
     def update(self, value, timestamp: Optional[float] = None):
         now = timestamp or time.time()
@@ -46,13 +95,15 @@ class MetricState:
         self.last_update = now
         self.update_count += 1
 
+        # History for sparkline
+        if isinstance(value, (int, float)):
+            self._history.append(float(value))
+
         # Track timestamps for rate calculation
         self._timestamps.append(now)
-        # Keep last 2 seconds of timestamps
         cutoff = now - 2.0
         self._timestamps = [t for t in self._timestamps if t > cutoff]
 
-        # Calculate rate
         if len(self._timestamps) >= 2:
             span = self._timestamps[-1] - self._timestamps[0]
             if span > 0:
@@ -68,7 +119,7 @@ class DashboardState:
     total_errors: int = 0
     buffer_size: int = 0
     start_time: float = field(default_factory=time.time)
-    sort_mode: str = "name"  # "name", "rate", "recent"
+    sort_mode: str = "name"
     paused: bool = False
     device_name: str = ""
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -118,13 +169,17 @@ class DashboardState:
         return self.total_sent / elapsed * 60
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Formatting
+# ─────────────────────────────────────────────────────────────────────────────
+
 def _format_value(value) -> str:
     """Format a metric value for display."""
     if isinstance(value, float):
         if abs(value) < 0.001 and value != 0:
             return f"{value:.4e}"
         elif abs(value) < 10:
-            return f"{value:.3f}"
+            return f"{value:.2f}"
         elif abs(value) < 1000:
             return f"{value:.1f}"
         else:
@@ -152,104 +207,151 @@ def _format_rate(hz: float) -> str:
         return f"{hz:.0f} Hz"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard Builder
+# ─────────────────────────────────────────────────────────────────────────────
+
 def build_dashboard(state: DashboardState) -> Group:
     """Build the full-screen dashboard layout."""
-    from plexus import __version__
+    # ── Logo ──
+    logo = Text.from_markup(f"[dim]{LOGO}[/dim]")
 
-    # ── Status dot ──
+    # ── Status ──
     status_map = {
-        "connecting": ("yellow", "connecting"),
+        "connecting": ("yellow", "connecting..."),
         "connected": ("green", "streaming"),
         "authenticated": ("green", "streaming"),
         "disconnected": ("red", "disconnected"),
         "buffering": ("yellow", "buffering"),
         "error": ("red", "error"),
     }
-    color, label = status_map.get(state.connection_status, ("dim", state.connection_status))
-
-    # ── Header line ──
-    header = Text()
-    header.append("  Plexus", style="bold")
-    header.append(f"  v{__version__}", style="dim")
-    header.append("    ")
-    header.append("●", style=color)
-    header.append(f" {label}", style=color)
-    header.append(f"    {state.uptime}", style="dim")
-    if state.paused:
-        header.append("    paused", style="yellow bold")
-
-    # ── Stats bar ──
-    pts = f"{state.points_per_min:.0f}" if state.points_per_min > 0 else "0"
-    stats = Text()
-    stats.append(f"  {state.total_sent} pts", style="dim")
-    stats.append(f"   {pts}/min", style="dim")
-    if state.total_errors > 0:
-        stats.append(f"   {state.total_errors} errors", style="red dim")
-    if state.buffer_size > 0:
-        stats.append(f"   buf:{state.buffer_size}", style="yellow dim")
-
-    # ── Metric table ──
-    table = Table(
-        show_header=True,
-        header_style="dim",
-        box=None,
-        pad_edge=True,
-        padding=(0, 2),
-        expand=False,
-        min_width=50,
+    color, label = status_map.get(
+        state.connection_status, ("dim", state.connection_status)
     )
 
-    table.add_column("  Metric", style="cyan", no_wrap=True, min_width=24)
-    table.add_column("Value", justify="right", min_width=12)
-    table.add_column("Rate", justify="right", style="dim", min_width=8)
-    table.add_column("", min_width=3)  # status dot
+    # ── Info bar: status, uptime, throughput ──
+    info = Text()
+    info.append("         ")  # align with logo
+    info.append("● ", style=f"bold {color}")
+    info.append(label, style=color)
+    info.append("     ", style="dim")
+    info.append(state.uptime, style="dim")
+
+    pts = f"{state.points_per_min:.0f}" if state.points_per_min > 0 else "0"
+    info.append("     ", style="dim")
+    info.append(f"{pts}", style="bold")
+    info.append(" pts/min", style="dim")
+
+    if state.total_errors > 0:
+        info.append(f"     {state.total_errors} errors", style="red")
+    if state.paused:
+        info.append("     PAUSED", style="yellow bold")
+
+    # ── Metric rows ──
+    table = Table(
+        show_header=False,
+        box=None,
+        padding=(0, 1),
+        expand=False,
+        min_width=70,
+    )
+
+    table.add_column("name", style="dim", no_wrap=True, min_width=22)
+    table.add_column("value", justify="right", min_width=10)
+    table.add_column("spark", min_width=18)
+    table.add_column("rate", justify="right", style="dim", min_width=8)
+    table.add_column("dot", min_width=2)
 
     with state._lock:
         if not state.metrics:
+            table.add_row("", "", "", "", "")
             table.add_row(
-                "  [dim]waiting for data...[/dim]", "", "", ""
+                "[dim italic]  waiting for first reading...[/dim italic]",
+                "", "", "", "",
             )
         else:
             if state.sort_mode == "rate":
-                sorted_metrics = sorted(state.metrics.values(), key=lambda m: m.rate_hz, reverse=True)
+                sorted_metrics = sorted(
+                    state.metrics.values(), key=lambda m: m.rate_hz, reverse=True
+                )
             elif state.sort_mode == "recent":
-                sorted_metrics = sorted(state.metrics.values(), key=lambda m: m.last_update, reverse=True)
+                sorted_metrics = sorted(
+                    state.metrics.values(), key=lambda m: m.last_update, reverse=True
+                )
             else:
-                sorted_metrics = sorted(state.metrics.values(), key=lambda m: m.name)
+                sorted_metrics = sorted(
+                    state.metrics.values(), key=lambda m: m.name
+                )
 
             for metric in sorted_metrics:
-                age = time.time() - metric.last_update if metric.last_update > 0 else 999
+                age = (
+                    time.time() - metric.last_update
+                    if metric.last_update > 0
+                    else 999
+                )
                 if age < 5:
                     dot = "[green]●[/green]"
                 elif age < 30:
                     dot = "[yellow]●[/yellow]"
                 else:
-                    dot = "[red]●[/red]"
+                    dot = "[red dim]●[/red dim]"
 
-                # Clean metric name: cpu.temperature → cpu temperature
-                display_name = "  " + metric.name.replace("_", " ").replace(".", " > ")
+                # Sparkline from history
+                spark_str = _sparkline(list(metric._history), width=16)
+                spark = Text(spark_str, style="green" if age < 5 else "yellow")
+
+                # Clean metric name
+                display_name = metric.name.replace("_", " ").replace(".", " ")
 
                 table.add_row(
-                    display_name,
-                    f"[bold]{metric.value}[/bold]",
+                    f"  {display_name}",
+                    f"[bold white]{metric.value}[/bold white]",
+                    spark,
                     _format_rate(metric.rate_hz),
                     dot,
                 )
 
+    # Wrap metrics in a thin-bordered panel
+    metric_panel = Panel(
+        table,
+        border_style="bright_black",
+        box=box.ROUNDED,
+        padding=(1, 1),
+        title="[dim]telemetry[/dim]",
+        title_align="left",
+        subtitle=f"[dim]{state.total_sent} points sent[/dim]",
+        subtitle_align="right",
+    )
+
     # ── Footer ──
-    sort_labels = {"name": "name", "rate": "rate", "recent": "recent"}
     footer = Text()
-    footer.append("  q", style="bold dim")
-    footer.append(" quit  ", style="dim")
-    footer.append("p", style="bold dim")
-    footer.append(" pause  ", style="dim")
-    footer.append("s", style="bold dim")
-    footer.append(f" sort:{sort_labels[state.sort_mode]}  ", style="dim")
+    footer.append("         ")
+    for key, label in [("q", "quit"), ("p", "pause"), ("s", "sort")]:
+        footer.append(f" {key}", style="bold")
+        footer.append(f" {label}", style="dim")
+        footer.append("   ", style="dim")
 
-    # Compose the full layout
+    sort_indicator = Text()
+    sort_indicator.append("         ")
+    sort_indicator.append(f" sort: {state.sort_mode}", style="dim italic")
+
     spacer = Text("")
-    return Group(header, stats, spacer, table, spacer, footer)
 
+    return Group(
+        spacer,
+        logo,
+        spacer,
+        info,
+        spacer,
+        metric_panel,
+        spacer,
+        footer,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Keyboard
+# ─────────────────────────────────────────────────────────────────────────────
 
 class _KeyReader:
     """Non-blocking keyboard reader for TUI shortcuts."""
@@ -269,7 +371,7 @@ class _KeyReader:
             import termios
             import tty
         except ImportError:
-            return  # Not a Unix terminal
+            return
 
         fd = sys.stdin.fileno()
         try:
@@ -292,6 +394,10 @@ class _KeyReader:
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
 
 class LiveDashboard:
     """
@@ -383,7 +489,7 @@ class LiveDashboard:
                 build_dashboard(self.state),
                 console=self.console,
                 refresh_per_second=4,
-                screen=True,  # Alternate screen buffer — hides setup output
+                screen=True,
             ) as live:
                 self._live = live
                 while connector_thread.is_alive() and not self._stop_event.is_set():
