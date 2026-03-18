@@ -25,6 +25,7 @@ try:
     from rich.text import Text
     from rich.panel import Panel
     from rich.style import Style
+    from rich.columns import Columns
     from rich import box
     _rich_available = True
 except ImportError:
@@ -36,189 +37,141 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────────────
 
 BRAILLE_BASE = 0x2800
-# Left column dots (bottom to top): dots 7, 3, 2, 1
 LEFT_DOTS = [0x40, 0x04, 0x02, 0x01]
-# Right column dots (bottom to top): dots 8, 6, 5, 4
 RIGHT_DOTS = [0x80, 0x20, 0x10, 0x08]
 
-# Green → amber gradient (8 steps, approximating OKLCH blend)
+# Green → amber gradient (8 steps)
 GRADIENT = [
-    "#50fa7b",  # green
-    "#6ee867",
-    "#8ed654",
-    "#aac443",
-    "#c4b235",
-    "#dba02a",
-    "#ef8e22",
-    "#f5a623",  # amber/orange
+    "#50fa7b", "#6ee867", "#8ed654", "#aac443",
+    "#c4b235", "#dba02a", "#ef8e22", "#f5a623",
 ]
+
+BORDER_COLOR = "#4a4a5a"
+MUTED_COLOR = "#6a6a7a"
+DIM_COLOR = "#3a3a4a"
 
 
 def _braille_column(height: int, row_bottom: int, dots: list) -> int:
-    """Return braille bits for one column based on how many dots to fill."""
     if height <= row_bottom:
         return 0
     bits = 0
-    dots_to_fill = min(height - row_bottom, 4)
-    for i in range(dots_to_fill):
+    for i in range(min(height - row_bottom, 4)):
         bits |= dots[i]
     return bits
 
 
-def braille_chart(data: List[float], width: int, height: int) -> List[Text]:
-    """Render a braille chart as a list of Rich Text lines.
+def braille_chart(
+    data: List[float], width: int, height: int,
+    scale_min: Optional[float] = None, scale_max: Optional[float] = None,
+) -> List[Text]:
+    """Render a braille chart with auto-scaling that shows variation.
 
-    Each character column encodes 2 data points. Each character row
-    encodes 4 vertical dots. Color gradient: green (bottom) to amber (top).
-
-    Args:
-        data: time series values
-        width: character width of chart area
-        height: character height (rows)
-
-    Returns:
-        List of Rich Text objects, one per row (top to bottom)
+    Uses a tight min/max window around the data so even near-constant
+    values show meaningful waveforms instead of flat blocks.
     """
     if width <= 0 or height <= 0:
         return [Text("")]
 
     data_points = width * 2
-    # Pad data to fill width
     padded = [0.0] * data_points
     src_start = max(0, len(data) - data_points)
     dst_start = max(0, data_points - len(data))
     for i, v in enumerate(data[src_start:]):
         padded[dst_start + i] = v
 
-    max_val = max(padded) if padded else 1.0
-    if max_val == 0:
-        max_val = 1.0
+    # Auto-scale: use data range with 10% padding so values aren't all
+    # pinned to the top. This reveals variation in near-constant metrics.
+    if scale_max is not None and scale_min is not None:
+        lo, hi = scale_min, scale_max
+    else:
+        actual_vals = [v for v in padded if v != 0] or padded
+        lo = min(actual_vals)
+        hi = max(actual_vals)
+        spread = hi - lo
+        if spread == 0:
+            spread = abs(hi) * 0.1 or 1.0
+        # Add 10% padding
+        lo = lo - spread * 0.1
+        hi = hi + spread * 0.1
+
+    rng = hi - lo
+    if rng == 0:
+        rng = 1.0
 
     dots_height = height * 4
 
-    # Calculate dot heights for each data point
     heights = []
     for v in padded:
-        h = int((v / max_val) * dots_height)
-        if v > 0 and h == 0:
-            h = 1
-        heights.append(h)
+        if v == 0 and lo > 0:
+            heights.append(0)
+        else:
+            normalized = max(0.0, min(1.0, (v - lo) / rng))
+            h = int(normalized * dots_height)
+            if v > lo and h == 0:
+                h = 1
+            heights.append(h)
 
     lines = []
     for row in range(height):
         row_bottom = (height - 1 - row) * 4
-
         chars = []
         for col in range(width):
             left_idx = col * 2
             right_idx = col * 2 + 1
-
             char = BRAILLE_BASE
             if left_idx < len(heights):
                 char |= _braille_column(heights[left_idx], row_bottom, LEFT_DOTS)
             if right_idx < len(heights):
                 char |= _braille_column(heights[right_idx], row_bottom, RIGHT_DOTS)
-
             chars.append(chr(char))
 
-        # Color gradient: t=0 (bottom) → green, t=1 (top) → amber
+        # Gradient: bottom → green, top → amber
         t = (height - 1 - row) / max(height - 1, 1)
-        gradient_idx = int(t * (len(GRADIENT) - 1))
-        color = GRADIENT[min(gradient_idx, len(GRADIENT) - 1)]
-
-        line = Text("".join(chars), style=Style(color=color))
-        lines.append(line)
+        color = GRADIENT[min(int(t * (len(GRADIENT) - 1)), len(GRADIENT) - 1)]
+        lines.append(Text("".join(chars), style=Style(color=color)))
 
     return lines
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Braille Bar Gauge (ported from ONCE's renderBar)
-# ─────────────────────────────────────────────────────────────────────────────
-
-BAR_FULL = "\u28ff"       # ⣿
-BAR_ROUND_LEFT = "\u28be"  # ⢾
-BAR_ROUND_RIGHT = "\u2537" # ⡷  — using closest available
-BAR_EMPTY = "\u2800"       # ⠀ (braille blank)
-
-
-def braille_bar(value: float, max_val: float, width: int, color: str = "green") -> Text:
-    """Render a braille bar gauge with rounded ends."""
-    if width <= 0 or max_val <= 0:
-        return Text("")
-
-    filled = int((value / max_val) * width)
-    filled = min(filled, width)
-
-    result = Text()
-    for i in range(width):
-        if i < filled:
-            if i == 0:
-                ch = BAR_ROUND_LEFT
-            elif i == filled - 1 and filled < width:
-                ch = BAR_FULL
-            else:
-                ch = BAR_FULL
-            result.append(ch, style=Style(color=color))
-        else:
-            result.append(BAR_EMPTY, style=Style(color="#3a3a4a"))
-    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Logo
 # ─────────────────────────────────────────────────────────────────────────────
 
-LOGO_ART = [
-    " ┌─┐",
-    "─┤ ├─",
-    " └─┘",
+LOGO_LINES = [
+    "    ┌─┐    ",
+    " ───┤ ├─── ",
+    "    └─┘    ",
+    "  plexus   ",
 ]
-
-LOGO_TEXT = "plexus"
 
 
 def render_logo(tick: int) -> Text:
     """Render the logo with a diagonal shine animation."""
-    full = Text(justify="center")
-
-    # Build the connector graphic
-    for i, line in enumerate(LOGO_ART):
-        shine_start = tick - i
-        shine_end = shine_start + 3
-
-        t = Text()
-        for j, ch in enumerate(line):
-            if 0 <= tick and shine_start <= j < shine_end:
-                t.append(ch, style=Style(color="#f5a623", bold=True))
+    result = Text(justify="center")
+    for row, line in enumerate(LOGO_LINES):
+        if row > 0:
+            result.append("\n")
+        for col, ch in enumerate(line):
+            diag = col - row
+            shine_hit = 0 <= tick and (tick - 3) <= diag <= tick
+            if shine_hit:
+                result.append(ch, style=Style(color="#f5a623", bold=True))
+            elif row == 3:  # brand name row
+                result.append(ch, style=Style(color="#8a8a9a", bold=True))
             else:
-                t.append(ch, style=Style(color="#5a5a6a"))
-        full.append(t)
-        full.append("\n")
-
-    # Brand name
-    name = Text(justify="center")
-    for j, ch in enumerate(LOGO_TEXT):
-        shine_start = tick - len(LOGO_ART) - j
-        if 0 <= tick and -2 <= shine_start <= 1:
-            name.append(ch, style=Style(color="#f5a623", bold=True))
-        else:
-            name.append(ch, style=Style(color="#8a8a9a", bold=True))
-    full.append(name)
-
-    return full
+                result.append(ch, style=Style(color=MUTED_COLOR))
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # State
 # ─────────────────────────────────────────────────────────────────────────────
 
-HISTORY_LEN = 120  # 2 minutes at 1Hz
+HISTORY_LEN = 120
 
 
 @dataclass
 class MetricState:
-    """Tracks the state of a single metric for display."""
     name: str
     value: str = ""
     raw_value: float = 0.0
@@ -234,14 +187,11 @@ class MetricState:
         self.value = _format_value(value)
         self.last_update = now
         self.update_count += 1
-
         if isinstance(value, (int, float)):
             self._history.append(float(value))
-
         self._timestamps.append(now)
         cutoff = now - 2.0
         self._timestamps = [t for t in self._timestamps if t > cutoff]
-
         if len(self._timestamps) >= 2:
             span = self._timestamps[-1] - self._timestamps[0]
             if span > 0:
@@ -250,7 +200,6 @@ class MetricState:
 
 @dataclass
 class DashboardState:
-    """Global state for the live dashboard."""
     metrics: Dict[str, MetricState] = field(default_factory=dict)
     connection_status: str = "connecting"
     total_sent: int = 0
@@ -259,7 +208,6 @@ class DashboardState:
     start_time: float = field(default_factory=time.time)
     sort_mode: str = "name"
     paused: bool = False
-    device_name: str = ""
     shine_tick: int = -1
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -313,7 +261,6 @@ class DashboardState:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _format_value(value) -> str:
-    """Format a metric value for display."""
     if isinstance(value, float):
         if abs(value) < 0.001 and value != 0:
             return f"{value:.4e}"
@@ -329,15 +276,25 @@ def _format_value(value) -> str:
         return str(value)
     elif isinstance(value, str):
         return value[:32]
-    elif isinstance(value, dict):
-        return str(value)[:40]
-    elif isinstance(value, list):
+    elif isinstance(value, (dict, list)):
         return str(value)[:40]
     return str(value)[:32]
 
 
+def _compact_value(value: float) -> str:
+    """Format a number compactly for scale labels."""
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}K"
+    if value >= 100:
+        return f"{value:.0f}"
+    if value >= 10:
+        return f"{value:.1f}"
+    return f"{value:.2f}"
+
+
 def _format_rate(hz: float) -> str:
-    """Format a rate for display."""
     if hz == 0:
         return ""
     elif hz < 1:
@@ -351,48 +308,61 @@ def _format_rate(hz: float) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_metric_card(metric: MetricState, width: int, chart_height: int = 4) -> Panel:
-    """Build a single metric card with braille chart and value."""
+    """Build a single metric card with braille chart, scale labels, and value."""
     history = list(metric._history)
-    chart_width = max(width - 4, 8)  # padding inside panel
+    label_width = 6
+    chart_width = max(width - 4 - label_width - 1, 4)
 
-    # Chart
-    chart_lines = braille_chart(history, chart_width, chart_height)
+    # Compute scale from history
+    actual_vals = [v for v in history if v != 0] or history or [0.0]
+    lo = min(actual_vals)
+    hi = max(actual_vals)
+    spread = hi - lo
+    if spread == 0:
+        spread = abs(hi) * 0.1 or 1.0
+    scale_lo = lo - spread * 0.1
+    scale_hi = hi + spread * 0.1
 
-    # Value + rate line
+    # Chart lines
+    chart_lines = braille_chart(history, chart_width, chart_height, scale_lo, scale_hi)
+
+    # Status dot
     age = time.time() - metric.last_update if metric.last_update > 0 else 999
-    if age < 5:
-        dot_color = "green"
-        dot = "●"
-    elif age < 30:
-        dot_color = "yellow"
-        dot = "●"
-    else:
-        dot_color = "red"
-        dot = "●"
+    dot_color = "green" if age < 5 else ("yellow" if age < 30 else "red")
 
+    # Assemble content: scale label | chart, per row
+    content = Text()
+    for i, chart_line in enumerate(chart_lines):
+        # Scale labels: max on first row, min on last row
+        if i == 0:
+            label = _compact_value(scale_hi)
+        elif i == len(chart_lines) - 1:
+            label = _compact_value(max(scale_lo, 0))
+        else:
+            label = ""
+        padded_label = label.rjust(label_width)
+        content.append(padded_label, style=Style(color=MUTED_COLOR))
+        content.append(" ")
+        content.append_text(chart_line)
+        content.append("\n")
+
+    # Value line
     value_line = Text()
-    value_line.append(f" {metric.value}", style=Style(bold=True))
+    value_line.append(" " * label_width + " ")
+    value_line.append(metric.value, style=Style(bold=True))
     rate_str = _format_rate(metric.rate_hz)
     if rate_str:
-        value_line.append(f"  {rate_str}", style=Style(color="#5a5a6a"))
-    value_line.append(f"  {dot}", style=Style(color=dot_color))
-
-    # Assemble card content
-    content = Text()
-    for line in chart_lines:
-        content.append(" ")
-        content.append_text(line)
-        content.append("\n")
+        value_line.append(f"  {rate_str}", style=Style(color=MUTED_COLOR))
+    value_line.append("  ●", style=Style(color=dot_color))
     content.append_text(value_line)
 
-    # Clean display name
     display_name = metric.name.replace("_", " ").replace(".", " ")
 
     return Panel(
         content,
-        title=f"[dim]{display_name}[/dim]",
+        title=f"[{MUTED_COLOR}]{display_name}[/{MUTED_COLOR}]",
         title_align="left",
-        border_style=Style(color="#3a3a4a"),
+        border_style=Style(color=BORDER_COLOR),
         box=box.ROUNDED,
         width=width,
         padding=(0, 1),
@@ -403,7 +373,7 @@ def build_metric_card(metric: MetricState, width: int, chart_height: int = 4) ->
 # Dashboard Builder
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_dashboard(state: DashboardState) -> Group:
+def build_dashboard(state: DashboardState, term_width: int = 0) -> Group:
     """Build the full-screen dashboard layout."""
     parts = []
 
@@ -422,20 +392,18 @@ def build_dashboard(state: DashboardState) -> Group:
         "error": ("#ff5555", "error"),
     }
     color, label = status_map.get(
-        state.connection_status, ("#5a5a6a", state.connection_status)
+        state.connection_status, (MUTED_COLOR, state.connection_status)
     )
 
     status_line = Text(justify="center")
     status_line.append("● ", style=Style(color=color, bold=True))
     status_line.append(label, style=Style(color=color))
     status_line.append("    ")
-    status_line.append(state.uptime, style=Style(color="#5a5a6a"))
-
+    status_line.append(state.uptime, style=Style(color=MUTED_COLOR))
     pts = f"{state.points_per_min:.0f}" if state.points_per_min > 0 else "0"
     status_line.append("    ")
     status_line.append(pts, style=Style(bold=True))
-    status_line.append(" pts/min", style=Style(color="#5a5a6a"))
-
+    status_line.append(" pts/min", style=Style(color=MUTED_COLOR))
     if state.total_errors > 0:
         status_line.append(f"    {state.total_errors} err", style=Style(color="#ff5555"))
     if state.paused:
@@ -447,7 +415,11 @@ def build_dashboard(state: DashboardState) -> Group:
     # ── Metric cards ──
     with state._lock:
         if not state.metrics:
-            waiting = Text("  waiting for first reading...", style=Style(color="#5a5a6a", italic=True))
+            waiting = Text(
+                "  waiting for first reading...",
+                style=Style(color=MUTED_COLOR, italic=True),
+                justify="center",
+            )
             parts.append(waiting)
         else:
             if state.sort_mode == "rate":
@@ -457,18 +429,34 @@ def build_dashboard(state: DashboardState) -> Group:
             else:
                 sorted_metrics = sorted(state.metrics.values(), key=lambda m: m.name)
 
-            # Determine card width based on metric count
             n = len(sorted_metrics)
-            if n <= 4:
-                card_width = 40
-                chart_height = 5
-            else:
-                card_width = 36
-                chart_height = 4
+            usable = term_width if term_width > 0 else 100
 
-            for metric in sorted_metrics:
-                card = build_metric_card(metric, card_width, chart_height)
-                parts.append(card)
+            # Responsive layout: side-by-side if they fit, stacked if not
+            if n <= 3 and usable >= n * 34 + (n - 1) * 1:
+                # Side by side
+                card_width = min((usable - (n - 1)) // n, 42)
+                chart_height = 6
+                cards = []
+                for metric in sorted_metrics:
+                    cards.append(build_metric_card(metric, card_width, chart_height))
+                parts.append(Columns(cards, padding=(0, 1), expand=False))
+            elif n <= 6 and usable >= 2 * 34 + 1:
+                # Two per row
+                card_width = min((usable - 1) // 2, 42)
+                chart_height = 5
+                row = []
+                for i, metric in enumerate(sorted_metrics):
+                    row.append(build_metric_card(metric, card_width, chart_height))
+                    if len(row) == 2 or i == n - 1:
+                        parts.append(Columns(row, padding=(0, 1), expand=False))
+                        row = []
+            else:
+                # Stacked
+                card_width = min(usable, 60)
+                chart_height = 4
+                for metric in sorted_metrics:
+                    parts.append(build_metric_card(metric, card_width, chart_height))
 
     parts.append(Text(""))
 
@@ -476,8 +464,7 @@ def build_dashboard(state: DashboardState) -> Group:
     footer = Text(justify="center")
     for key, label in [("q", "quit"), ("p", "pause"), ("s", "sort")]:
         footer.append(f" {key}", style=Style(bold=True))
-        footer.append(f" {label}  ", style=Style(color="#5a5a6a"))
-
+        footer.append(f" {label}  ", style=Style(color=MUTED_COLOR))
     parts.append(footer)
 
     return Group(*parts)
@@ -488,8 +475,6 @@ def build_dashboard(state: DashboardState) -> Group:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class _KeyReader:
-    """Non-blocking keyboard reader for TUI shortcuts."""
-
     def __init__(self, state: DashboardState, stop_event: threading.Event):
         self.state = state
         self.stop_event = stop_event
@@ -533,17 +518,12 @@ class _KeyReader:
 # Dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 
-SHINE_INTERVAL = 10.0   # seconds between shines
-SHINE_MAX = 20          # tick count for one shine pass
+SHINE_INTERVAL = 10.0
+SHINE_MAX = 20
 
 
 class LiveDashboard:
-    """
-    Full-screen live terminal dashboard.
-
-    Takes over the terminal with an alternate screen buffer,
-    reads sensors locally, and displays real-time metrics.
-    """
+    """Full-screen live terminal dashboard."""
 
     def __init__(self, sensor_hub=None):
         if not _rich_available:
@@ -564,7 +544,6 @@ class LiveDashboard:
         self._key_reader: Optional[_KeyReader] = None
 
     def on_status(self, msg: str):
-        """Status callback for the connector."""
         lower = msg.lower()
         if "connected as" in lower or "authenticated" in lower:
             self.state.set_status("connected")
@@ -576,11 +555,9 @@ class LiveDashboard:
             self.state.set_status("connecting")
 
     def on_metric(self, name: str, value, timestamp: Optional[float] = None):
-        """Called when a metric is sent."""
         self.state.update_metric(name, value, timestamp)
 
     def wrap_status_callback(self, original_callback: Optional[Callable] = None) -> Callable:
-        """Return a status callback that updates both the TUI and the original callback."""
         def wrapped(msg: str):
             self.on_status(msg)
             if original_callback:
@@ -588,7 +565,6 @@ class LiveDashboard:
         return wrapped
 
     def _sensor_read_loop(self):
-        """Read sensors locally and feed metrics into the TUI state."""
         while not self._stop_event.is_set():
             try:
                 readings = self.sensor_hub.read_all()
@@ -599,51 +575,37 @@ class LiveDashboard:
             time.sleep(1)
 
     def _shine_loop(self):
-        """Animate the logo shine periodically."""
-        time.sleep(2.0)  # initial delay
+        time.sleep(2.0)
         while not self._stop_event.is_set():
-            # Run one shine pass
             for tick in range(SHINE_MAX):
                 if self._stop_event.is_set():
                     return
                 self.state.shine_tick = tick
                 time.sleep(0.05)
             self.state.shine_tick = -1
-            # Wait for next shine
             for _ in range(int(SHINE_INTERVAL * 10)):
                 if self._stop_event.is_set():
                     return
                 time.sleep(0.1)
 
     def run(self, connector_fn: Callable):
-        """
-        Run the live dashboard with a connector function.
-
-        Args:
-            connector_fn: Function that starts the connector (blocking).
-                          Will be run in a background thread.
-        """
         self.state = DashboardState()
         self._stop_event.clear()
 
-        # Run connector in background thread
         connector_thread = threading.Thread(target=connector_fn, daemon=True)
         connector_thread.start()
 
-        # Start local sensor reader to feed metrics into TUI
         if self.sensor_hub:
             threading.Thread(target=self._sensor_read_loop, daemon=True).start()
 
-        # Start keyboard reader
         self._key_reader = _KeyReader(self.state, self._stop_event)
         self._key_reader.start()
 
-        # Start logo shine animation
         threading.Thread(target=self._shine_loop, daemon=True).start()
 
         try:
             with Live(
-                build_dashboard(self.state),
+                build_dashboard(self.state, self.console.width),
                 console=self.console,
                 refresh_per_second=4,
                 screen=True,
@@ -651,7 +613,7 @@ class LiveDashboard:
                 self._live = live
                 while connector_thread.is_alive() and not self._stop_event.is_set():
                     if not self.state.paused:
-                        live.update(build_dashboard(self.state))
+                        live.update(build_dashboard(self.state, self.console.width))
                     time.sleep(0.25)
         except KeyboardInterrupt:
             pass
