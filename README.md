@@ -40,6 +40,7 @@ Works on any Linux system — Raspberry Pi, edge compute nodes, test rigs, fleet
 ```bash
 brew install pipx
 pipx install plexus-agent
+plexus start
 ```
 
 **Linux / Raspberry Pi** (one-line setup):
@@ -58,18 +59,18 @@ pip install plexus-agent
 
 > **Note:** Modern macOS and Debian/Ubuntu block `pip install` system-wide ([PEP 668](https://peps.python.org/pep-0668/)). Use `pipx`, the curl script, or a virtual environment instead of running `pip install` directly.
 
-| Extra        | What it adds                          |
-| ------------ | ------------------------------------- |
-| `[sensors]`  | I2C sensors (IMU, environmental)      |
-| `[can]`      | CAN bus with DBC decoding             |
-| `[mavlink]`  | MAVLink for drones/UAVs               |
-| `[mqtt]`     | MQTT bridge                           |
-| `[camera]`   | USB cameras (OpenCV)                  |
-| `[picamera]` | Raspberry Pi Camera Module            |
-| `[serial]`   | Serial/UART (GPS, custom devices)     |
-| `[tui]`      | Live terminal dashboard               |
-| `[system]`   | System health (psutil)                |
-| `[all]`      | Everything                            |
+| Extra        | What it adds                      |
+| ------------ | --------------------------------- |
+| `[sensors]`  | I2C sensors (IMU, environmental)  |
+| `[can]`      | CAN bus with DBC decoding         |
+| `[mavlink]`  | MAVLink for drones/UAVs           |
+| `[mqtt]`     | MQTT bridge                       |
+| `[camera]`   | USB cameras (OpenCV)              |
+| `[picamera]` | Raspberry Pi Camera Module        |
+| `[serial]`   | Serial/UART (GPS, custom devices) |
+| `[tui]`      | Live terminal dashboard           |
+| `[system]`   | System health (psutil)            |
+| `[all]`      | Everything                        |
 
 ```bash
 pip install plexus-agent[all]   # install everything at once
@@ -112,10 +113,10 @@ plexus start --key plx_xxx                # Use an API key directly
 plexus start --device-id my-drone         # Set device identifier
 ```
 
-| Flag             | Description                                         |
-| ---------------- | --------------------------------------------------- |
-| `-k, --key`      | API key (skips interactive auth prompt)             |
-| `--device-id`    | Device ID from dashboard                            |
+| Flag          | Description                             |
+| ------------- | --------------------------------------- |
+| `-k, --key`   | API key (skips interactive auth prompt) |
+| `--device-id` | Device ID from dashboard                |
 
 `plexus start` handles auth, hardware detection, and sensor selection interactively:
 
@@ -370,6 +371,7 @@ Requires the `tui` extra: `pip install plexus-agent[tui]`
 ## Troubleshooting
 
 **Permission denied on I2C**
+
 ```bash
 sudo usermod -aG i2c $USER && reboot
 ```
