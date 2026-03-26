@@ -284,7 +284,7 @@ class StreamManager:
             return
 
         if not detected.is_up:
-            self.on_status(f"CAN interface {channel} is down — run: plexus scan --setup")
+            self.on_status(f"CAN interface {channel} is down — configure with: sudo ip link set {channel} up type can bitrate 500000")
             return
 
         # Stop existing stream for this channel

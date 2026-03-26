@@ -22,6 +22,12 @@ from dataclasses import dataclass
 
 from .base import BaseSensor, SensorHub
 
+try:
+    from .spi_scan import scan_spi
+    _HAS_SPI = True
+except ImportError:
+    _HAS_SPI = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,6 +66,7 @@ def _init_known_sensors():
     from .vl53l0x import VL53L0X
     from .ads1115 import ADS1115
     from .magnetometer import QMC5883L, HMC5883L
+    from .adxl345 import ADXL345
 
     # Register known sensors: (driver_class, i2c_address, chip_id_check)
     KNOWN_SENSORS = [
@@ -91,6 +98,9 @@ def _init_known_sensors():
         # Magnetometers
         (QMC5883L, 0x0D, None),
         (HMC5883L, 0x1E, None),
+        # Accelerometer (I2C mode)
+        (ADXL345, 0x53, None),
+        (ADXL345, 0x1D, None),
     ]
 
 
@@ -181,6 +191,21 @@ def scan_sensors(bus: int = 1) -> List[DetectedSensor]:
                     except Exception as e:
                         logger.debug(f"Sensor probe failed at 0x{address:02X}: {e}")
 
+    # Also scan SPI buses if spidev is available
+    if _HAS_SPI:
+        try:
+            spi_matches = scan_spi()
+            for match in spi_matches:
+                detected.append(DetectedSensor(
+                    name=match.name,
+                    address=0,  # SPI doesn't use addresses
+                    bus=match.bus,
+                    driver=match.driver,
+                    description=match.description,
+                ))
+        except Exception as e:
+            logger.debug("SPI scan failed: %s", e)
+
     return detected
 
 
@@ -205,7 +230,11 @@ def auto_sensors(
     detected = scan_sensors(bus)
 
     for info in detected:
-        kwargs = {"address": info.address, "bus": info.bus}
+        if info.address == 0:
+            # SPI sensor
+            kwargs = {"bus_type": "spi", "spi_bus": info.bus}
+        else:
+            kwargs = {"address": info.address, "bus": info.bus}
 
         if sample_rate is not None:
             kwargs["sample_rate"] = sample_rate

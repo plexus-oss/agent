@@ -41,6 +41,7 @@ Supported Sensors:
     - ADS1115: 16-bit ADC (4 channels, programmable gain)
     - QMC5883L: 3-axis magnetometer / compass
     - HMC5883L: 3-axis magnetometer / compass
+    - ADXL345: 3-axis accelerometer (I2C or SPI)
     - GPSSensor: GPS receiver (lat, lon, altitude, speed via NMEA serial)
     - SystemSensor: System health (CPU temp, memory, disk, load)
 """
@@ -54,9 +55,15 @@ from .bh1750 import BH1750
 from .vl53l0x import VL53L0X
 from .ads1115 import ADS1115
 from .magnetometer import QMC5883L, HMC5883L
+from .adxl345 import ADXL345
 from .gps import GPSSensor
 from .auto import scan_sensors, auto_sensors, scan_i2c, DetectedSensor
 from .system import SystemSensor
+
+try:
+    from .spi_scan import scan_spi, scan_spi_buses, SPISensorMatch
+except ImportError:
+    pass
 
 __all__ = [
     # Base classes
@@ -74,6 +81,7 @@ __all__ = [
     "ADS1115",
     "QMC5883L",
     "HMC5883L",
+    "ADXL345",
     # Serial sensors
     "GPSSensor",
     # System
@@ -83,6 +91,9 @@ __all__ = [
     "auto_sensors",
     "scan_i2c",
     "DetectedSensor",
+    "scan_spi",
+    "scan_spi_buses",
+    "SPISensorMatch",
     # Registry
     "SENSOR_REGISTRY",
 ]
@@ -91,4 +102,5 @@ __all__ = [
 SENSOR_REGISTRY = {
     "system": SystemSensor,
     "gps": GPSSensor,
+    "adxl345": ADXL345,
 }

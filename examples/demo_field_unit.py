@@ -22,7 +22,7 @@ Wiring — Servo:
 
 Setup:
     pip install plexus-agent[sensors] RPi.GPIO
-    plexus login --key plx_xxxxx
+    plexus start --key plx_xxxxx
     sudo python demo_field_unit.py   # sudo needed for GPIO PWM
 
 Dashboard alerts to set up:

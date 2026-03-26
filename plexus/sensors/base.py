@@ -47,6 +47,9 @@ class BaseSensor(ABC):
     # I2C address(es) for auto-detection
     i2c_addresses: List[int] = []
 
+    # SPI bus/chip-select pairs for auto-detection
+    spi_devices: List[tuple] = []
+
     # Per-sensor read timeout (seconds). None = use SensorHub default.
     read_timeout: Optional[float] = None
 

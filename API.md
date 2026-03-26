@@ -13,7 +13,6 @@ Send telemetry data to Plexus using HTTP or WebSocket.
 │   app.plexus.company                     plexus-realtime.partykit.dev    │
 │   ├── /api/ingest           POST         ├── Device connections          │
 │   ├── /api/sessions         POST/PATCH   ├── Browser connections         │
-│   ├── /api/auth/device      POST/GET/PUT └── Real-time relay             │
 │   └── /api/auth/verify-key  GET                                          │
 │                                                                          │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -77,10 +76,10 @@ Plexus uses API keys for all authentication:
 
 ### Getting an API Key
 
-**Option A: Browser login (recommended for devices)**
+**Option A: CLI setup (recommended for devices)**
 
-1. Run `plexus login` on your device
-2. Sign in via your browser
+1. Run `plexus start` on your device
+2. Sign up or sign in directly in the terminal
 3. API key is saved to `~/.plexus/config.json`
 
 **Option B: Manual creation**
@@ -532,14 +531,14 @@ class MySensor(BaseSensor):
 
 ## Errors
 
-| Status | Meaning                               |
-| ------ | ------------------------------------- |
-| 200    | Success                               |
-| 400    | Bad request (check JSON format)       |
-| 401    | Invalid or missing API key            |
-| 403    | API key lacks permissions             |
-| 404    | Resource not found                    |
-| 410    | Resource expired                      |
+| Status | Meaning                         |
+| ------ | ------------------------------- |
+| 200    | Success                         |
+| 400    | Bad request (check JSON format) |
+| 401    | Invalid or missing API key      |
+| 403    | API key lacks permissions       |
+| 404    | Resource not found              |
+| 410    | Resource expired                |
 
 ## Best Practices
 

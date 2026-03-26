@@ -11,8 +11,13 @@
 
 ```bash
 pip install plexus-agent
+plexus start
+```
+
+That's it. The CLI walks you through sign-up, detects your hardware, and starts streaming. If you already have an API key, pass it directly:
+
+```bash
 plexus start --key plx_xxxxx
-# That's it. TUI launches, sensors stream, data flows.
 ```
 
 Get an API key from [app.plexus.company](https://app.plexus.company) → Devices → Add Device.
@@ -30,9 +35,28 @@ Works on any Linux system — Raspberry Pi, edge compute nodes, test rigs, fleet
 
 ## Install
 
+**macOS** (recommended — avoids Python environment issues):
+
 ```bash
+brew install pipx
+pipx install plexus-agent
+```
+
+**Linux / Raspberry Pi** (one-line setup):
+
+```bash
+curl -sL https://app.plexus.company/setup | bash -s -- --key plx_xxxxx
+```
+
+**Manual** (any platform with Python 3.8+):
+
+```bash
+python3 -m venv ~/.plexus-env
+source ~/.plexus-env/bin/activate
 pip install plexus-agent
 ```
+
+> **Note:** Modern macOS and Debian/Ubuntu block `pip install` system-wide ([PEP 668](https://peps.python.org/pep-0668/)). Use `pipx`, the curl script, or a virtual environment instead of running `pip install` directly.
 
 | Extra        | What it adds                          |
 | ------------ | ------------------------------------- |
@@ -61,8 +85,8 @@ pip install plexus-agent[all]   # install everything at once
 
 Two ways to authenticate:
 
-1. **API key (recommended):** `plexus start --key plx_xxxxx`
-2. **Browser login:** `plexus login` (opens browser for OAuth device flow)
+1. **Interactive (default):** `plexus start` — sign up or sign in directly in the terminal
+2. **API key:** `plexus start --key plx_xxxxx` — skip the interactive prompt
 
 Credentials are stored in `~/.plexus/config.json` or can be set via environment variables:
 
@@ -74,45 +98,26 @@ export PLEXUS_ENDPOINT=https://app.plexus.company  # default
 ### CLI Reference
 
 ```
-plexus start [--key KEY] [--name NAME] [OPTIONS]       Set up and stream
-plexus login                                           Log in via browser
-plexus add   [CAPABILITY...]                           Install capabilities (sensors, can, mqtt, ...)
-plexus scan  [--all] [--setup] [--json]                Detect connected hardware
-plexus status                                          Check connection and config
-plexus doctor                                          Diagnose issues
+plexus start [--key KEY] [--device-id ID]    Set up and stream
+plexus reset                                 Clear config and start over
 ```
 
 ### plexus start
 
-Set up and start streaming in one command. Handles auth, hardware detection, dependency installation, and sensor selection. The live terminal dashboard (TUI) is enabled by default. Interactive when run without flags, non-interactive with flags like `--sensor` or `--no-sensors`.
+Set up and start streaming. Handles auth, hardware detection, and sensor selection. The live terminal dashboard (TUI) is enabled by default. Automatically switches to headless mode when output is piped or in a non-TTY environment.
 
 ```bash
 plexus start                              # Interactive setup with live TUI
-plexus start --key plx_xxx                # Non-interactive auth
-plexus start --sensor system              # Stream CPU, memory, disk, thermals
-plexus start --headless                   # Disable TUI, log-only output
-plexus start --mqtt localhost:1883        # Bridge MQTT data
-plexus start --no-sensors --no-cameras    # Skip hardware auto-detection
-plexus start --auto-install               # Auto-install missing dependencies
-plexus start --name "robot-01"            # Name the device
+plexus start --key plx_xxx                # Use an API key directly
+plexus start --device-id my-drone         # Set device identifier
 ```
 
 | Flag             | Description                                         |
 | ---------------- | --------------------------------------------------- |
 | `-k, --key`      | API key (skips interactive auth prompt)             |
-| `-n, --name`     | Device name for fleet identification                |
-| `--slug`         | Device slug (source ID) from dashboard              |
-| `--org`          | Organization ID from dashboard                      |
-| `-b, --bus`      | I2C bus number (default: 1)                         |
-| `-s, --sensor`   | Sensor type to use (e.g. `system`). Repeatable.     |
-| `--no-sensors`   | Disable I2C sensor auto-detection                   |
-| `--no-cameras`   | Disable camera auto-detection                       |
-| `--mqtt`         | MQTT broker to bridge (e.g. `localhost:1883`)       |
-| `--mqtt-topic`   | MQTT topic to subscribe to (default: `sensors/#`)   |
-| `--headless`     | Disable the live terminal dashboard (TUI)           |
-| `--auto-install` | Auto-install missing Python dependencies on demand  |
+| `--device-id`    | Device ID from dashboard                            |
 
-`plexus start` handles auth, hardware detection, dependency installation, and sensor selection interactively:
+`plexus start` handles auth, hardware detection, and sensor selection interactively:
 
 ```
 Found 3 sensors on I2C bus 1:
@@ -124,38 +129,13 @@ Found 3 sensors on I2C bus 1:
 Stream all? [Y/n] or enter numbers to select (e.g., 1,3):
 ```
 
-### plexus add
+### plexus reset
 
-Install capabilities — like `shadcn add` for hardware. Without arguments, shows an interactive picker with install status.
-
-```bash
-plexus add                           # Interactive picker
-plexus add can                       # Add CAN bus support
-plexus add sensors camera            # Add multiple
-```
-
-Available capabilities: `sensors`, `camera`, `picamera`, `mqtt`, `can`, `mavlink`, `serial`, `system`, `tui`.
-
-### plexus scan
-
-Detect all connected hardware — I2C sensors, cameras, serial ports, USB devices, network interfaces, GPIO, Bluetooth, and system info.
+Clear all configuration — API key, device ID, and settings. Run `plexus start` again to set up from scratch.
 
 ```bash
-plexus scan                # Full hardware scan
-plexus scan --all          # Show all I2C addresses (including unknown)
-plexus scan --setup        # Auto-configure CAN interfaces
-plexus scan --json         # Machine-readable JSON output
+plexus reset                           # Prompts for confirmation
 ```
-
-### plexus doctor
-
-Diagnose connectivity, configuration, and dependency issues. Checks config files, network reachability, authentication, installed dependencies, and hardware permissions.
-
-```bash
-plexus doctor              # Run all diagnostics
-```
-
-Run `plexus <command> --help` for full options.
 
 ### Direct HTTP
 
@@ -347,12 +327,6 @@ adapter.connect()
 adapter.run(on_data=my_callback)
 ```
 
-Or bridge directly from the CLI:
-
-```bash
-plexus start --mqtt localhost:1883 --mqtt-topic "sensors/#"
-```
-
 ## Buffering and Reliability
 
 The client buffers data locally when the network is unavailable:
@@ -373,7 +347,7 @@ px.flush_buffer()
 
 ## Live Terminal Dashboard
 
-The TUI launches by default when you run `plexus start` — no flags needed. It gives you a real-time view of everything streaming from your device, like htop for your hardware. Pass `--headless` to disable the TUI and get log-only output instead.
+The TUI launches by default when you run `plexus start` — no flags needed. It gives you a real-time view of everything streaming from your device, like htop for your hardware. Headless mode is used automatically when output is piped or in a non-TTY environment.
 
 Keyboard shortcuts: `q` quit | `p` pause | `s` scroll metrics | `?` help
 
@@ -404,7 +378,7 @@ sudo usermod -aG i2c $USER && reboot
 Verify your key at [app.plexus.company/devices](https://app.plexus.company/devices). Keys start with `plx_`.
 
 **No sensors detected**
-Run `plexus scan --all` to see raw I2C addresses. Check wiring, pull-up resistors, and that the correct I2C bus is selected (`--bus`).
+Check wiring, pull-up resistors, and that sensors are on I2C bus 1 (default). Set `PLEXUS_I2C_BUS` environment variable to use a different bus.
 
 **TUI not showing**
 Install the TUI extra: `pip install plexus-agent[tui]`. The TUI also requires a real terminal — it will not render when output is piped or in a non-TTY environment.
@@ -413,7 +387,7 @@ Install the TUI extra: `pip install plexus-agent[tui]`. The TUI also requires a 
 Set `PLEXUS_ENDPOINT` to your proxy URL. Ensure outbound access on ports 443 and 80.
 
 **Something else?**
-Run `plexus doctor` for automated diagnostics covering config, network, auth, dependencies, and hardware permissions.
+Try `plexus reset` to clear config and start fresh, or check the [API docs](https://github.com/plexus-oss/agent/blob/main/API.md) for protocol details.
 
 ## Architecture
 

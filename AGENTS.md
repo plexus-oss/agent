@@ -4,39 +4,30 @@ Machine-readable interface for AI assistants and automation scripts.
 
 ## Environment Variables
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `PLEXUS_API_KEY` | API key for authentication | `plx_xxxxx` |
+| Variable          | Description                                        | Example                       |
+| ----------------- | -------------------------------------------------- | ----------------------------- |
+| `PLEXUS_API_KEY`  | API key for authentication                         | `plx_xxxxx`                   |
 | `PLEXUS_ENDPOINT` | Server URL (default: `https://app.plexus.company`) | `https://custom.endpoint.com` |
-| `PLEXUS_ORG_ID` | Organization ID | `org_xxxxx` |
+| `PLEXUS_ORG_ID`   | Organization ID                                    | `org_xxxxx`                   |
 
-## Headless Streaming
-
-Run without interactive prompts or TUI:
+## CLI Commands
 
 ```bash
-plexus start --headless --key plx_xxxxx --sensor system
-plexus start --headless --key plx_xxxxx --name "ci-runner-01"
-plexus start --headless --key plx_xxxxx --no-sensors --mqtt localhost:1883
+plexus start                           # Interactive setup + stream
+plexus start --key plx_xxxxx           # Non-interactive auth
+plexus start --device-id my-device     # Set device identifier
+plexus reset                           # Clear config and start over
 ```
 
-All auth and hardware selection must be provided via flags in headless mode.
-
-## Machine-Readable Output
-
-```bash
-plexus scan --json          # JSON hardware scan
-plexus status               # Connection and config check
-plexus doctor               # Diagnostic output
-```
+Headless mode is auto-detected when output is piped or in a non-TTY environment. Set `PLEXUS_API_KEY` to skip interactive auth in headless contexts.
 
 ## Exit Codes
 
-| Code | Meaning |
-|------|---------|
-| `0` | Clean shutdown |
-| `1` | Configuration or authentication error |
-| `130` | Interrupted (SIGINT / Ctrl+C) |
+| Code  | Meaning                               |
+| ----- | ------------------------------------- |
+| `0`   | Clean shutdown                        |
+| `1`   | Configuration or authentication error |
+| `130` | Interrupted (SIGINT / Ctrl+C)         |
 
 ## Python SDK
 
@@ -85,4 +76,4 @@ plexus/
 - API keys are prefixed with `plx_`
 - Source IDs (device slugs) are used for metric namespacing
 - Telemetry is sent via WebSocket (real-time) and HTTP (persistence)
-- The TUI is enabled by default in interactive terminals; use `--headless` for scripts
+- The TUI is enabled by default in interactive terminals; headless mode is auto-detected

@@ -325,7 +325,7 @@ class PlexusConnector:
         Backoff resets after a successful connection that lasts >30s.
         """
         if not self.api_key:
-            raise ValueError("No API key. Run 'plexus login' first.")
+            raise ValueError("No API key. Run 'plexus start' first.")
 
         ws_url = self._get_ws_url()
         self.on_status(f"Connecting to {ws_url}...")

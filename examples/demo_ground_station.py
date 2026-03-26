@@ -12,7 +12,7 @@ Hardware:
 
 Setup:
     pip install plexus-agent[sensors,camera]
-    plexus login --key plx_xxxxx
+    plexus start --key plx_xxxxx
     python demo_ground_station.py
 
 Dashboard alerts to set up:

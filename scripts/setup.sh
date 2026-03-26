@@ -278,17 +278,8 @@ else
     echo "  1. Get an API key from ${CYAN}https://app.plexus.company${NC} → Settings → Developer"
     echo "  2. Run: ${CYAN}plexus start --key plx_xxxxx${NC}"
     echo ""
-    echo "  Or run ${CYAN}plexus login${NC} to sign in via browser."
+    echo "  Run ${CYAN}plexus start${NC} to sign in and connect."
     echo ""
-
-    # Check if already authenticated
-    if plexus status 2>/dev/null | grep -q "Connected"; then
-        echo -e "  ${GREEN}✓ Device is already authenticated${NC}"
-        echo ""
-    else
-        echo "  Skipping authentication for now..."
-        echo ""
-    fi
 fi
 
 # Done!
@@ -297,9 +288,11 @@ echo ""
 echo -e "  ${GREEN}Setup complete!${NC}"
 echo ""
 echo "  Quick commands:"
-echo "    plexus start     # Start agent (foreground)"
-echo "    plexus status    # Check connection"
-echo "    plexus scan      # List sensors"
+echo "    plexus start     # Set up and stream"
+echo "    plexus reset     # Clear config and start over"
 echo ""
 echo "  Dashboard: ${CYAN}https://app.plexus.company${NC}"
+echo ""
+echo "  To uninstall:"
+echo "    rm -rf ~/.plexus /opt/plexus"
 echo ""
