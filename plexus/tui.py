@@ -404,6 +404,10 @@ def build_dashboard(state: DashboardState, term_width: int = 0) -> Group:
     status_line.append("    ")
     status_line.append(pts, style=Style(bold=True))
     status_line.append(" pts/min", style=Style(color=MUTED_COLOR))
+    if state.buffer_size > 0:
+        status_line.append("    ")
+        status_line.append(f"{state.buffer_size:,}", style=Style(bold=True))
+        status_line.append(" buffered", style=Style(color="#e5c07b"))
     if state.total_errors > 0:
         status_line.append(f"    {state.total_errors} err", style=Style(color="#ff5555"))
     if state.paused:
@@ -553,6 +557,22 @@ class LiveDashboard:
             self.state.set_status("disconnected")
         elif "reconnecting" in lower:
             self.state.set_status("connecting")
+
+        # Parse buffer status from backlog drain messages
+        if "buffered points" in lower:
+            # "Draining 12,340 buffered points..."
+            import re
+            m = re.search(r"([\d,]+)\s+buffered", msg)
+            if m:
+                self.state.set_buffer(int(m.group(1).replace(",", "")))
+        elif "backlog drained" in lower or "backlog: " in lower:
+            # Update remaining count from drain progress
+            import re
+            m = re.search(r"([\d,]+)\s+remaining", msg)
+            if m:
+                self.state.set_buffer(int(m.group(1).replace(",", "")))
+            elif "drained" in lower:
+                self.state.set_buffer(0)
 
     def on_metric(self, name: str, value, timestamp: Optional[float] = None):
         self.state.update_metric(name, value, timestamp)

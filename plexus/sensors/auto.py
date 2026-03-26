@@ -125,12 +125,7 @@ def scan_i2c(bus: int = 1) -> List[int]:
     try:
         i2c = SMBus(bus)
     except PermissionError:
-        logger.warning(
-            "Permission denied opening I2C bus %d. "
-            "Try: sudo usermod -aG i2c $USER && reboot",
-            bus,
-        )
-        return []
+        raise  # Let CLI handle with user-friendly message
     except OSError as e:
         logger.debug("Could not open I2C bus %d: %s", bus, e)
         return []
@@ -158,11 +153,8 @@ def scan_sensors(bus: int = 1) -> List[DetectedSensor]:
     """
     _init_known_sensors()
 
-    # First, scan for all I2C devices
-    try:
-        addresses = scan_i2c(bus)
-    except ImportError:
-        return []
+    # First, scan for all I2C devices (ImportError/PermissionError propagate)
+    addresses = scan_i2c(bus)
 
     detected = []
 
@@ -213,6 +205,7 @@ def auto_sensors(
     bus: int = 1,
     sample_rate: Optional[float] = None,
     prefix: str = "",
+    detected: Optional[List[DetectedSensor]] = None,
 ) -> SensorHub:
     """
     Auto-detect sensors and create a SensorHub.
@@ -221,13 +214,15 @@ def auto_sensors(
         bus: I2C bus number
         sample_rate: Override sample rate for all sensors (None = use defaults)
         prefix: Prefix for all metric names
+        detected: Pre-scanned sensors to use (skips re-scanning if provided)
 
     Returns:
         SensorHub with all detected sensors added
     """
     hub = SensorHub()
 
-    detected = scan_sensors(bus)
+    if detected is None:
+        detected = scan_sensors(bus)
 
     for info in detected:
         if info.address == 0:

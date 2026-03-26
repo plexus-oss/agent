@@ -33,6 +33,8 @@ Usage:
 Note: Requires authentication. Run 'plexus start' or set PLEXUS_API_KEY.
 """
 
+import gzip
+import json
 import logging
 import time
 from contextlib import contextmanager
@@ -272,9 +274,21 @@ class Plexus:
 
         for attempt in range(self.retry_config.max_retries + 1):
             try:
+                payload = json.dumps({"source_id": self.source_id, "points": all_points})
+                payload_bytes = payload.encode("utf-8")
+
+                # Gzip compress payloads > 1KB for bandwidth efficiency
+                if len(payload_bytes) > 1024:
+                    body = gzip.compress(payload_bytes, compresslevel=6)
+                    headers = {"Content-Type": "application/json", "Content-Encoding": "gzip"}
+                else:
+                    body = payload_bytes
+                    headers = {"Content-Type": "application/json"}
+
                 response = self._get_session().post(
                     url,
-                    json={"source_id": self.source_id, "points": all_points},
+                    data=body,
+                    headers=headers,
                     timeout=self.timeout,
                 )
 

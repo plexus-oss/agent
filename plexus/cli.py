@@ -150,6 +150,35 @@ def status_line(msg: str):
     click.echo(f"  {msg}")
 
 
+def _print_status_block(device_name: str, sensors: list, dashboard_url: Optional[str]):
+    """Print the compact post-connect status block."""
+    click.echo()
+    success(f"{device_name} connected")
+    click.echo()
+
+    # Metrics preview — first 3 names + "N more"
+    all_metrics = []
+    for s in sensors:
+        m = getattr(s, 'metrics', None) or (
+            getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None
+        )
+        if m:
+            all_metrics.extend(m)
+
+    if all_metrics:
+        preview = ", ".join(all_metrics[:3])
+        remaining = len(all_metrics) - 3
+        metrics_str = preview + (f" + {remaining} more" if remaining > 0 else "")
+    else:
+        metrics_str = "none"
+
+    label("Metrics", metrics_str)
+    label("Mode", "Live (record from dashboard)")
+    if dashboard_url:
+        label("Dashboard", dashboard_url)
+    click.echo()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -367,13 +396,9 @@ def _terminal_auth(endpoint: str) -> str:
     sys.exit(1)
 
 
-def _startup_wizard(endpoint: str) -> dict:
-    """Interactive startup wizard for first-time users.
-
-    Returns dict with api_key, sensors, cameras so start() can skip
-    redundant detection steps.
-    """
-    from plexus.detect import detect_sensors, detect_cameras
+def _startup_wizard(endpoint: str) -> str:
+    """Interactive first-time setup. Returns API key."""
+    import socket
 
     # ── Welcome box ──
     device_type = _detect_device_type()
@@ -385,69 +410,23 @@ def _startup_wizard(endpoint: str) -> dict:
     click.secho(f"  └{'─' * (Style.WIDTH - 2)}┘", fg=Style.DIM)
     click.echo()
 
-    # ── Step 1: Auth ──
-    click.secho("  Step 1/3  Authentication", bold=True)
+    # ── Device name ──
+    default_name = socket.gethostname().lower().replace(" ", "-")
+    device_name = click.prompt(
+        click.style("  Device name", fg=Style.INFO),
+        default=default_name,
+    ).strip().lower().replace(" ", "-")
+
+    config = load_config()
+    config["source_name"] = device_name
+    config["source_id"] = device_name
+    save_config(config)
+    success(f"Device: {device_name}")
+    click.echo()
+
+    # ── Auth ──
     api_key = _terminal_auth(endpoint)
-
-    # ── Step 2: Hardware scan ──
-    click.secho("  Step 2/3  Hardware Scan", bold=True)
-    click.echo()
-
-    sensors = []
-    cameras = []
-    sensor_hub = None
-
-    spinner = Spinner("Scanning for sensors...")
-    spinner.start()
-    try:
-        sensor_hub, sensors = detect_sensors(1)
-        spinner.stop(f"Found {len(sensors)} sensor{'s' if len(sensors) != 1 else ''}", success_status=True)
-    except Exception:
-        spinner.stop("No I2C sensors found", success_status=False)
-
-    spinner = Spinner("Scanning for cameras...")
-    spinner.start()
-    try:
-        _, cameras = detect_cameras()
-        spinner.stop(f"Found {len(cameras)} camera{'s' if len(cameras) != 1 else ''}", success_status=True)
-    except Exception:
-        spinner.stop("No cameras found", success_status=False)
-
-    if sensors:
-        click.echo()
-        for s in sensors:
-            s_metrics = getattr(s, 'metrics', None) or (
-                getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None
-            )
-            metrics_str = ", ".join(s_metrics) if s_metrics else ""
-            click.echo(
-                f"    {Style.CHECK} "
-                + click.style(f"{s.name:<12}", fg=Style.SUCCESS)
-                + click.style(metrics_str, fg=Style.DIM)
-            )
-
-    click.echo()
-
-    # ── Step 3: Ready ──
-    metric_count = 0
-    for s in sensors:
-        metrics = getattr(s, 'metrics', None) or (
-            getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None
-        )
-        metric_count += len(metrics) if metrics else 1
-
-    click.secho("  Step 3/3  Ready", bold=True)
-    click.echo()
-    label = f"Streaming {metric_count} metrics" if metric_count else "Ready to connect"
-    click.echo(f"  {label} — press Enter to start")
-    click.pause("")
-
-    return {
-        "api_key": api_key,
-        "sensors": sensors,
-        "cameras": cameras,
-        "sensor_hub": sensor_hub,
-    }
+    return api_key
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -720,346 +699,40 @@ def _should_use_tui(headless: bool) -> bool:
         return False
 
 
-@main.command()
-@click.option("--key", "-k", help="API key from dashboard")
-@click.option("--device-id", help="Device ID from dashboard")
-def start(key: Optional[str], device_id: Optional[str]):
-    """
-    Set up and start streaming.
+def _quiet_status_line(msg: str, _state={"connected": False}):
+    """Status callback that suppresses initial connect noise."""
+    if not _state["connected"]:
+        # Suppress Connecting/Authenticating/Connected during first connect
+        if msg.startswith("Connecting to") or msg == "Authenticating...":
+            return
+        if msg.startswith("Connected as"):
+            _state["connected"] = True
+            return
+    status_line(msg)
 
-    Handles auth, hardware detection, and streaming. Interactive when run
-    without flags.
 
-    \b
-    Examples:
-        plexus start                   # Interactive setup
-        plexus start --key plx_xxx     # Use an API key directly
-    """
-    from plexus.connector import run_connector
-    from plexus.detect import detect_sensors, detect_cameras, detect_can
-
-    slug = device_id
-
-    # ── TUI mode detection ────────────────────────────────────────────────
-    # Auto-detect: use TUI if interactive terminal, headless otherwise
-    headless = not sys.stdout.isatty()
-    use_tui = _should_use_tui(headless)
-
-    if not use_tui and not headless:
-        # Rich not installed but interactive terminal
-        click.secho("  Hint: pip install plexus-agent[tui] for live dashboard", fg=Style.DIM)
-        click.echo()
-
-    # ── Welcome ───────────────────────────────────────────────────────────
-    header(f"Plexus Agent v{__version__}")
-
-    # ── Auth ──────────────────────────────────────────────────────────────
-    api_key = get_api_key()
-    endpoint = get_endpoint()
-
-    # ── Startup wizard for first-time users ──────────────────────────────
-    wizard_result = None
-    if not api_key and not headless:
-        wizard_result = _startup_wizard(endpoint)
-        api_key = wizard_result["api_key"]
-
-    if key:
-        # --key flag: save and use
-        config = load_config()
-        config["api_key"] = key
-        save_config(config)
-        api_key = key
-        success(f"API key saved ({_mask_key(api_key)})")
-    elif api_key:
-        # Key already in config
-        success(f"API key: {_mask_key(api_key)}")
-    else:
-        # Terminal sign-up / sign-in flow
-        api_key = _terminal_auth(endpoint)
-
-    # Validate key
-    spinner = Spinner("Validating API key...")
-    spinner.start()
-    key_valid = _validate_api_key(api_key, endpoint)
-    if key_valid:
-        spinner.stop("Connected to Plexus", success_status=True)
-    else:
-        spinner.stop("API key invalid or server unreachable", success_status=False)
-        click.echo()
-        hint("Check your key at app.plexus.company/devices")
-        click.echo()
-        sys.exit(1)
-
-    # If wizard already ran, skip redundant auth/detection
-    if wizard_result:
-        sensors = wizard_result["sensors"]
-        cameras = wizard_result["cameras"]
-        sensor_hub = wizard_result["sensor_hub"]
-        camera_hub = None
-        can_adapters, up_can, down_can = [], [], []
-
-        # Jump to summary
-        source_id = get_source_id()
-
-        metric_count = 0
-        for s in sensors:
-            metrics = getattr(s, 'metrics', None) or (
-                getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None
-            )
-            metric_count += len(metrics) if metrics else 1
-
-        stream_label = f"Streaming {metric_count} metrics" if metric_count else "Connected"
-        click.secho(f"  {Style.CHECK} {stream_label} {Style.ARROW} {source_id}", fg=Style.SUCCESS)
-        click.echo()
-
-        _launch_auto_dashboard(
-            api_key=api_key,
-            endpoint=endpoint,
-            source_id=source_id,
-            sensors=sensors,
-            cameras=cameras,
-        )
-
-        if sensor_hub and not use_tui:
-            _start_metric_readout(sensor_hub)
-
-        # Go to connector launch
-        if use_tui:
-            try:
-                from plexus.tui import LiveDashboard
-                dashboard = LiveDashboard(sensor_hub=sensor_hub)
-
-                def _connector_fn():
-                    from plexus.connector import run_connector
-                    run_connector(
-                        api_key=api_key,
-                        endpoint=endpoint,
-                        on_status=dashboard.wrap_status_callback(status_line),
-                        sensor_hub=sensor_hub,
-                        camera_hub=camera_hub,
-                        can_adapters=can_adapters,
-                    )
-
-                dashboard.run(_connector_fn)
-            except ImportError as e:
-                warning(str(e).strip())
-                hint("Install with: pip install plexus-agent[tui]")
-                from plexus.connector import run_connector
-                try:
-                    run_connector(
-                        api_key=api_key,
-                        endpoint=endpoint,
-                        on_status=status_line,
-                        sensor_hub=sensor_hub,
-                        camera_hub=camera_hub,
-                        can_adapters=can_adapters,
-                    )
-                except KeyboardInterrupt:
-                    click.echo()
-                    status_line("Disconnected")
-                    click.echo()
-            except KeyboardInterrupt:
-                pass
-        else:
-            from plexus.connector import run_connector
-            try:
-                run_connector(
-                    api_key=api_key,
-                    endpoint=endpoint,
-                    on_status=status_line,
-                    sensor_hub=sensor_hub,
-                    camera_hub=camera_hub,
-                    can_adapters=can_adapters,
-                )
-            except KeyboardInterrupt:
-                click.echo()
-                status_line("Disconnected")
-                click.echo()
-        return
-
-    # ── Device ID ──────────────────────────────────────────────────────────
-    if slug:
-        config = load_config()
-        config["source_id"] = slug
-        save_config(config)
-        success(f"Device ID: {slug}")
-
-    click.echo()
-
-    # ── Hardware scan ─────────────────────────────────────────────────────
-    info("Scanning hardware...")
-    click.echo()
-
-    # Sensors
-    sensor_hub = None
-    sensors = []
-    i2c_error = None
-
-    try:
-        sensor_hub, sensors = detect_sensors(1)
-    except PermissionError:
-        i2c_error = "I2C permission denied (run: sudo usermod -aG i2c $USER)"
-    except ImportError:
-        from plexus.deps import prompt_install
-        if prompt_install("smbus2", extra="sensors"):
-            try:
-                sensor_hub, sensors = detect_sensors(1)
-            except Exception as e:
-                i2c_error = str(e)
-        else:
-            i2c_error = None  # User declined, not an error — just skip
-    except Exception as e:
-        i2c_error = str(e)
-
-    if i2c_error:
-        warning(i2c_error)
-
-    # Cameras
-    camera_hub = None
-    cameras = []
-    try:
-        camera_hub, cameras = detect_cameras()
-    except ImportError:
-        logger.debug("Camera support not installed (opencv-python missing)")
-    except Exception as e:
-        click.echo(click.style(f"  {Style.CROSS} Camera detection failed: {e}", fg=Style.WARNING))
-
-    # CAN
-    can_adapters, up_can, down_can = detect_can()
-
-    # ── Device type detection ────────────────────────────────────────────
-    device_type = _detect_device_type()
-    auto_system = False
-
-    # If nothing detected, suggest system metrics
-    if not sensors and not cameras and not up_can and not headless:
-        click.echo(
-            click.style(f"  {Style.BULLET} ", fg=Style.DIM)
-            + f"Detected: {device_type}"
-        )
-        click.echo(
-            click.style(f"  {Style.BULLET} ", fg=Style.DIM)
-            + "No hardware sensors found"
-        )
-        click.echo()
-
-        enable_system = click.confirm(
-            click.style("  Enable system metrics", fg=Style.INFO)
-            + click.style(" (CPU, memory, temperature)?", fg=Style.DIM),
-            default=True,
-        )
-
-        if enable_system:
-            auto_system = True
-            try:
-                from plexus.detect import detect_named_sensors
-                sensor_hub, sensors = detect_named_sensors(["system"])
-            except (ImportError, ValueError):
-                from plexus.deps import prompt_install
-                if prompt_install("psutil", extra="system"):
-                    from plexus.detect import detect_named_sensors
-                    sensor_hub, sensors = detect_named_sensors(["system"])
-
-            if sensors:
-                for s in sensors:
-                    s_metrics = getattr(s, 'metrics', None) or (
-                        getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None
-                    )
-                    metrics_str = ", ".join(s_metrics) if s_metrics else ""
-                    click.echo(
-                        f"    {Style.CHECK} "
-                        + click.style(f"{s.name:<12}", fg=Style.SUCCESS)
-                        + click.style(metrics_str, fg=Style.DIM)
-                    )
-                click.echo()
-
-    # ── Sensor selection (interactive only) ────────────────────────────────
-    # Skip sensor selection if we just auto-enabled system metrics
-    if sensors and not headless and not auto_system:
-        click.echo(f"  Found {len(sensors)} sensor{'s' if len(sensors) != 1 else ''} on I2C bus 1:")
-        click.echo()
-
-        for idx, s in enumerate(sensors):
-            metrics = getattr(s, 'metrics', None) or (getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None)
-            metrics_str = ", ".join(metrics) if metrics else getattr(s, 'description', "")
-            click.echo(
-                f"    [{idx + 1}] "
-                + click.style(Style.CHECK, fg=Style.SUCCESS)
-                + f" {s.name:<12}"
-                + click.style(metrics_str, fg=Style.DIM)
-            )
-
-        click.echo()
-        selection = click.prompt(
-            "  Stream all? [Y/n] or enter numbers to select (e.g., 1,3)",
-            default="Y",
-            show_default=False,
-        ).strip()
-
-        if selection.lower() not in ("y", "yes", ""):
-            # Parse selection
-            try:
-                indices = [int(x.strip()) - 1 for x in selection.split(",")]
-                selected_sensors = [sensors[i] for i in indices if 0 <= i < len(sensors)]
-            except (ValueError, IndexError):
-                warning("Invalid selection, streaming all sensors")
-                selected_sensors = sensors
-        else:
-            selected_sensors = sensors
-
-        # Build a SensorHub with only selected sensors
-        if selected_sensors and len(selected_sensors) != len(sensors):
-            from plexus.sensors.base import SensorHub
-            sensor_hub = SensorHub()
-            for s in selected_sensors:
-                sensor_instance = s.driver(address=s.address, bus=s.bus)
-                sensor_hub.add(sensor_instance)
-            sensors = selected_sensors
-
-        click.echo()
-
-    # ── Summary ───────────────────────────────────────────────────────────
-    metric_count = 0
-    for s in sensors:
-        metrics = getattr(s, 'metrics', None) or (getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None)
-        metric_count += len(metrics) if metrics else 1
-
-    if cameras:
-        info(f"Cameras: {len(cameras)} detected")
-    if up_can:
-        info(f"CAN: {len(up_can)} active interface{'s' if len(up_can) != 1 else ''}")
-
-    click.echo()
-
-    source_id = get_source_id()
-
-    stream_label = f"Streaming {metric_count} metrics" if metric_count else "Connected"
-    click.secho(f"  {Style.CHECK} {stream_label} {Style.ARROW} {source_id}", fg=Style.SUCCESS)
-    click.echo()
-
-    # ── Auto-dashboard (background) ──────────────────────────────────────
-    _launch_auto_dashboard(
-        api_key=api_key,
-        endpoint=endpoint,
-        source_id=source_id,
-        sensors=sensors,
-        cameras=cameras,
-    )
-
-    # ── Live metric readout (background) ────────────────────────────────
-    if sensor_hub and not use_tui:
-        _start_metric_readout(sensor_hub)
-
-    # ── Start connector ───────────────────────────────────────────────────
+def _run_connector(
+    *,
+    api_key: str,
+    endpoint: str,
+    use_tui: bool,
+    source_name: Optional[str] = None,
+    sensor_hub,
+    camera_hub,
+    can_adapters,
+):
+    """Single launch site for the connector (TUI or plain)."""
     if use_tui:
         try:
             from plexus.tui import LiveDashboard
             dashboard = LiveDashboard(sensor_hub=sensor_hub)
 
             def _connector_fn():
+                from plexus.connector import run_connector
                 run_connector(
                     api_key=api_key,
                     endpoint=endpoint,
+                    source_name=source_name,
                     on_status=dashboard.wrap_status_callback(status_line),
                     sensor_hub=sensor_hub,
                     camera_hub=camera_hub,
@@ -1070,27 +743,25 @@ def start(key: Optional[str], device_id: Optional[str]):
         except ImportError as e:
             warning(str(e).strip())
             hint("Install with: pip install plexus-agent[tui]")
-            try:
-                run_connector(
-                    api_key=api_key,
-                    endpoint=endpoint,
-                    on_status=status_line,
-                    sensor_hub=sensor_hub,
-                    camera_hub=camera_hub,
-                    can_adapters=can_adapters,
-                )
-            except KeyboardInterrupt:
-                click.echo()
-                status_line("Disconnected")
-                click.echo()
+            _run_connector(
+                api_key=api_key,
+                endpoint=endpoint,
+                use_tui=False,
+                source_name=source_name,
+                sensor_hub=sensor_hub,
+                camera_hub=camera_hub,
+                can_adapters=can_adapters,
+            )
         except KeyboardInterrupt:
             pass
     else:
+        from plexus.connector import run_connector
         try:
             run_connector(
                 api_key=api_key,
                 endpoint=endpoint,
-                on_status=status_line,
+                source_name=source_name,
+                on_status=_quiet_status_line,
                 sensor_hub=sensor_hub,
                 camera_hub=camera_hub,
                 can_adapters=can_adapters,
@@ -1099,6 +770,169 @@ def start(key: Optional[str], device_id: Optional[str]):
             click.echo()
             status_line("Disconnected")
             click.echo()
+
+
+@main.command()
+@click.option("--key", "-k", help="API key from dashboard")
+@click.option("--device-id", help="Device ID from dashboard")
+@click.option("--scan", is_flag=True, help="Re-detect hardware and update config")
+def start(key: Optional[str], device_id: Optional[str], scan: bool):
+    """
+    Set up and start streaming.
+
+    Handles auth, hardware detection, and streaming. Sensors are detected
+    on first run and saved to config. Use --scan to re-detect.
+
+    \b
+    Examples:
+        plexus start                   # Interactive setup
+        plexus start --key plx_xxx     # Use an API key directly
+    """
+    from plexus.detect import (
+        detect_sensors, detect_cameras, detect_can,
+        detect_named_sensors, sensors_to_config, load_sensors_from_config,
+    )
+
+    slug = device_id
+
+    # ── TUI mode detection ────────────────────────────────────────────────
+    # Auto-detect: use TUI if interactive terminal, headless otherwise
+    headless = not sys.stdout.isatty()
+    use_tui = _should_use_tui(headless)
+
+    # ── Welcome ───────────────────────────────────────────────────────────
+    header(f"Plexus Agent v{__version__}")
+
+    # ── Auth ──────────────────────────────────────────────────────────────
+    api_key = get_api_key()
+    endpoint = get_endpoint()
+
+    # ── Startup wizard for first-time users ──────────────────────────────
+    if not api_key and not headless:
+        api_key = _startup_wizard(endpoint)
+
+    if key:
+        # --key flag: save and use
+        config = load_config()
+        config["api_key"] = key
+        save_config(config)
+        api_key = key
+    elif not api_key:
+        # Terminal sign-up / sign-in flow
+        api_key = _terminal_auth(endpoint)
+
+    # Validate key
+    if not _validate_api_key(api_key, endpoint):
+        error("API key invalid or server unreachable")
+        hint("Check your key at app.plexus.company/devices")
+        click.echo()
+        sys.exit(1)
+
+    # ── Device ID ──────────────────────────────────────────────────────────
+    if slug:
+        config = load_config()
+        config["source_id"] = slug
+        save_config(config)
+
+    # ── Hardware ──────────────────────────────────────────────────────────
+    cfg = load_config()
+    saved_sensors = cfg.get("sensors")
+    sensor_hub = None
+    sensors = []
+
+    if saved_sensors is not None and not scan:
+        # ── Load from config (no prompts, no scanning) ──
+        sensor_hub, sensors = load_sensors_from_config(saved_sensors)
+        if not sensors and saved_sensors:
+            warning("No configured sensors responding (try: plexus start --scan)")
+    else:
+        # ── First run or --scan: detect and save ──
+        info("Scanning hardware...")
+        click.echo()
+
+        try:
+            sensor_hub, sensors = detect_sensors(1)
+        except PermissionError:
+            warning("I2C permission denied (run: sudo usermod -aG i2c $USER)")
+        except ImportError:
+            logger.debug("smbus2 not installed, skipping I2C scan")
+        except Exception as e:
+            logger.debug("Sensor detection failed: %s", e)
+
+        # Fallback to system metrics if nothing found
+        if not sensors:
+            try:
+                sensor_hub, sensors = detect_named_sensors(["system"])
+            except Exception:
+                warning("Could not enable system metrics (pip install psutil)")
+
+        # Save to config
+        cfg["sensors"] = sensors_to_config(sensors)
+        save_config(cfg)
+
+        # Print what was detected
+        if sensors:
+            for s in sensors:
+                s_metrics = getattr(s, 'metrics', None) or (
+                    getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None
+                )
+                metrics_str = ", ".join(s_metrics) if s_metrics else ""
+                click.echo(
+                    f"    {Style.CHECK} "
+                    + click.style(f"{s.name:<12}", fg=Style.SUCCESS)
+                    + click.style(metrics_str, fg=Style.DIM)
+                )
+            dim(f"Saved to config ({get_config_path()})")
+            dim("Re-detect with: plexus start --scan")
+        click.echo()
+
+    # Cameras
+    camera_hub = None
+    cameras = []
+    try:
+        camera_hub, cameras = detect_cameras()
+    except ImportError:
+        logger.debug("Camera support not installed (opencv-python missing)")
+    except Exception as e:
+        logger.debug("Camera detection failed: %s", e)
+
+    # CAN
+    can_adapters, up_can, down_can = detect_can()
+
+    # ── Status block ────────────────────────────────────────────────────
+    source_id = get_source_id()
+    cfg = load_config()
+    device_name = cfg.get("source_name") or source_id
+
+    # Get dashboard URL from config (saved from previous run)
+    dashboard_id = cfg.get("dashboard_id")
+    dashboard_url = f"{endpoint}/dashboards/{dashboard_id}" if dashboard_id else None
+
+    # Launch dashboard creation in background (first run or if missing)
+    _launch_auto_dashboard(
+        api_key=api_key,
+        endpoint=endpoint,
+        source_id=source_id,
+        sensors=sensors,
+        cameras=cameras,
+    )
+
+    _print_status_block(device_name, sensors, dashboard_url)
+
+    # ── Live metric readout (background) ────────────────────────────────
+    if sensor_hub and not use_tui:
+        _start_metric_readout(sensor_hub)
+
+    # ── Start connector ───────────────────────────────────────────────────
+    _run_connector(
+        api_key=api_key,
+        endpoint=endpoint,
+        use_tui=use_tui,
+        source_name=device_name,
+        sensor_hub=sensor_hub,
+        camera_hub=camera_hub,
+        can_adapters=can_adapters,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

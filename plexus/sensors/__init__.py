@@ -98,9 +98,21 @@ __all__ = [
     "SENSOR_REGISTRY",
 ]
 
-# Maps CLI --sensor names to driver classes
+# Maps sensor names to driver classes (used by config and CLI)
 SENSOR_REGISTRY = {
+    # Named sensors (no I2C address needed)
     "system": SystemSensor,
     "gps": GPSSensor,
+    # I2C sensors
+    "mpu6050": MPU6050,
+    "mpu9250": MPU9250,
+    "bme280": BME280,
+    "ina219": INA219,
+    "sht3x": SHT3x,
+    "bh1750": BH1750,
+    "vl53l0x": VL53L0X,
+    "ads1115": ADS1115,
+    "qmc5883l": QMC5883L,
+    "hmc5883l": HMC5883L,
     "adxl345": ADXL345,
 }

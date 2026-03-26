@@ -106,19 +106,17 @@ def detect_sensors(bus: int = 1) -> Tuple[Optional["SensorHub"], List]:
 
     Returns:
         (sensor_hub or None, list of detected sensor info objects)
+
+    Raises:
+        ImportError: If smbus2 is not installed.
+        PermissionError: If I2C bus is not accessible.
     """
-    try:
-        from plexus.sensors import scan_sensors, auto_sensors
-        sensors = scan_sensors(bus)
-        if sensors:
-            hub = auto_sensors(bus=bus)
-            return hub, sensors
-        return None, []
-    except ImportError:
-        return None, []
-    except Exception as e:
-        logger.debug(f"Sensor detection failed: {e}")
-        return None, []
+    from plexus.sensors import scan_sensors, auto_sensors
+    sensors = scan_sensors(bus)
+    if sensors:
+        hub = auto_sensors(bus=bus, detected=sensors)
+        return hub, sensors
+    return None, []
 
 
 def detect_cameras() -> Tuple[Optional["CameraHub"], List]:
@@ -199,6 +197,90 @@ def detect_named_sensors(
         sensor = driver_class()
         hub.add(sensor)
         info_list.append(SensorInfo(name=sensor.name, description=sensor.description))
+
+    if not info_list:
+        return None, []
+
+    return hub, info_list
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Config Serialization
+# ─────────────────────────────────────────────────────────────────────────────
+
+def sensors_to_config(sensors: List) -> List[str]:
+    """Serialize detected sensors to config strings.
+
+    Format: "name" for named sensors, "name:0xADDR" for I2C sensors.
+
+    Args:
+        sensors: List of DetectedSensor or SensorInfo objects.
+
+    Returns:
+        List of config spec strings (e.g. ["mpu6050:0x68", "system"]).
+    """
+    specs = []
+    for s in sensors:
+        address = getattr(s, "address", None)
+        if address and address > 0:
+            name = s.name.lower().replace(" ", "_")
+            bus = getattr(s, "bus", 1)
+            spec = f"{name}:0x{address:02x}"
+            if bus != 1:
+                spec += f":{bus}"
+            specs.append(spec)
+        else:
+            # Named sensor (system, gps, etc.)
+            specs.append(s.name.lower().replace(" ", "_"))
+    return specs
+
+
+def load_sensors_from_config(
+    specs: List[str],
+) -> Tuple[Optional["SensorHub"], List[SensorInfo]]:
+    """Build a SensorHub from config spec strings.
+
+    Args:
+        specs: List of sensor specs (e.g. ["mpu6050:0x68", "system"]).
+
+    Returns:
+        (sensor_hub or None, list of SensorInfo for display)
+    """
+    from plexus.sensors import SENSOR_REGISTRY, SensorHub
+
+    hub = SensorHub()
+    info_list = []
+
+    for spec in specs:
+        parts = spec.split(":")
+        name = parts[0].lower()
+
+        if name not in SENSOR_REGISTRY:
+            logger.warning("Unknown sensor '%s' in config, skipping", spec)
+            continue
+
+        driver_class = SENSOR_REGISTRY[name]
+
+        try:
+            if len(parts) >= 2:
+                # I2C sensor: "name:0xADDR" or "name:0xADDR:BUS"
+                address = int(parts[1], 16)
+                bus = int(parts[2]) if len(parts) > 2 else 1
+                sensor = driver_class(address=address, bus=bus)
+            else:
+                # Named sensor: "system", "gps", etc.
+                sensor = driver_class()
+
+            if sensor.is_available():
+                hub.add(sensor)
+                info_list.append(SensorInfo(
+                    name=sensor.name,
+                    description=sensor.description,
+                ))
+            else:
+                logger.warning("%s not responding, skipping", spec)
+        except Exception as e:
+            logger.warning("Failed to initialize %s: %s, skipping", spec, e)
 
     if not info_list:
         return None, []

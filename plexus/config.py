@@ -58,6 +58,8 @@ DEFAULT_CONFIG = {
     "endpoint": None,
     "command_allowlist": None,
     "command_denylist": None,
+    "persistent_buffer": True,
+    "sensors": None,
 }
 
 def get_config_path() -> Path:
@@ -163,3 +165,9 @@ def get_command_denylist() -> Optional[list]:
     """Get command denylist from config. Matching commands will be blocked."""
     config = load_config()
     return config.get("command_denylist")
+
+
+def get_persistent_buffer() -> bool:
+    """Get persistent buffer setting. Default True (store-and-forward enabled)."""
+    config = load_config()
+    return config.get("persistent_buffer", True)

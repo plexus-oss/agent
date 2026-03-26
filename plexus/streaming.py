@@ -3,6 +3,10 @@ Stream management for Plexus devices.
 
 Handles real-time sensor and camera streaming over WebSocket,
 with optional HTTP persistence for recording.
+
+Store-and-forward: when a buffer is provided, telemetry that fails to send
+over WebSocket (e.g. during disconnection) is written to the buffer instead
+of being dropped. The connector drains the buffer on reconnect via HTTP.
 """
 
 import asyncio
@@ -12,11 +16,14 @@ import logging
 import time
 from typing import Optional, Callable, List, Dict, Any, TYPE_CHECKING
 
+from websockets.exceptions import ConnectionClosed
+
 if TYPE_CHECKING:
     from plexus.sensors.base import SensorHub
     from plexus.cameras.base import CameraHub
     from plexus.adapters.can_detect import DetectedCAN
     from plexus.adapters.mavlink_detect import DetectedMAVLink
+    from plexus.buffer import BufferBackend
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +36,9 @@ class StreamManager:
         camera_hub: CameraHub instance for capturing frames.
         on_status: Callback for status messages.
         persist_fn: Async function to persist data points (called when recording).
+        buffer: Optional buffer backend for store-and-forward. When provided,
+                telemetry that fails to send over WebSocket is buffered locally
+                instead of being lost.
     """
 
     def __init__(
@@ -40,6 +50,7 @@ class StreamManager:
         on_status: Optional[Callable[[str], None]] = None,
         persist_fn: Optional[Callable[[List[Dict[str, Any]]], Any]] = None,
         error_report_fn: Optional[Callable] = None,
+        buffer: Optional["BufferBackend"] = None,
     ):
         self.sensor_hub = sensor_hub
         self.camera_hub = camera_hub
@@ -48,6 +59,7 @@ class StreamManager:
         self.on_status = on_status or (lambda x: None)
         self.persist_fn = persist_fn
         self.error_report_fn = error_report_fn
+        self.buffer = buffer
 
         self._active_streams: Dict[str, asyncio.Task] = {}
         self._active_camera_streams: Dict[str, asyncio.Task] = {}
@@ -56,6 +68,24 @@ class StreamManager:
         self._active_mavlink_streams: Dict[str, asyncio.Task] = {}
         self._mavlink_instances: Dict[str, Any] = {}  # conn_string -> MAVLinkAdapter
         self._recording: bool = False
+
+    # =========================================================================
+    # WebSocket Send with Buffer Fallback
+    # =========================================================================
+
+    async def _send_or_buffer(self, ws, points: List[Dict[str, Any]]) -> bool:
+        """Send telemetry over WebSocket, falling back to buffer on failure.
+
+        Returns True if sent over WebSocket, False if buffered.
+        """
+        try:
+            await ws.send(json.dumps({"type": "telemetry", "points": points}))
+            return True
+        except (ConnectionClosed, ConnectionError, OSError):
+            if self.buffer and points:
+                self.buffer.add(points)
+                logger.debug("WebSocket down, buffered %d points", len(points))
+            return False
 
     # =========================================================================
     # Sensor Streaming
@@ -101,8 +131,8 @@ class StreamManager:
                         for r in readings
                     ]
 
-                    # Always send to WebSocket (real-time display)
-                    await ws.send(json.dumps({"type": "telemetry", "points": points}))
+                    # Send to WebSocket (real-time), buffer on failure
+                    await self._send_or_buffer(ws, points)
 
                     # If recording, also persist via HTTP
                     if self._recording and points and self.persist_fn:
@@ -341,7 +371,7 @@ class StreamManager:
                             }
                             for m in metrics
                         ]
-                        await ws.send(json.dumps({"type": "telemetry", "points": points}))
+                        await self._send_or_buffer(ws, points)
 
                         if self._recording and self.persist_fn:
                             asyncio.create_task(self.persist_fn(points))
@@ -456,7 +486,7 @@ class StreamManager:
                             }
                             for m in metrics
                         ]
-                        await ws.send(json.dumps({"type": "telemetry", "points": points}))
+                        await self._send_or_buffer(ws, points)
 
                         if self._recording and self.persist_fn:
                             asyncio.create_task(self.persist_fn(points))
