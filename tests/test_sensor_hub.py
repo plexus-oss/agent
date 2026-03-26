@@ -1,5 +1,6 @@
 """Tests for SensorHub concurrent reads, timeouts, and failure handling."""
 
+import pytest
 import time
 from typing import List
 
@@ -194,20 +195,14 @@ class TestValidation:
 
 
 class TestI2CPermissionError:
-    def test_permission_error_logged(self, caplog):
-        """PermissionError on SMBus should produce a warning with instructions."""
-        import logging
+    def test_permission_error_raised(self):
+        """PermissionError on SMBus should propagate to the caller."""
+        from unittest.mock import patch, MagicMock
 
-        with caplog.at_level(logging.WARNING):
-            from unittest.mock import patch, MagicMock
+        mock_smbus = MagicMock()
+        mock_smbus.SMBus.side_effect = PermissionError("Permission denied")
 
-            mock_smbus = MagicMock()
-            mock_smbus.SMBus.side_effect = PermissionError("Permission denied")
-
-            with patch.dict("sys.modules", {"smbus2": mock_smbus}):
-                from plexus.sensors.auto import scan_i2c
-                result = scan_i2c(bus=1)
-
-        assert result == []
-        assert any("Permission denied" in r.message for r in caplog.records)
-        assert any("usermod" in r.message for r in caplog.records)
+        with patch.dict("sys.modules", {"smbus2": mock_smbus}):
+            from plexus.sensors.auto import scan_i2c
+            with pytest.raises(PermissionError):
+                scan_i2c(bus=1)

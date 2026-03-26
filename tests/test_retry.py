@@ -253,7 +253,19 @@ class TestBuffering:
 
             # Check that both points were sent
             call_args = mock_session.return_value.post.call_args
-            sent_points = call_args.kwargs["json"]["points"]
+            # Client now sends raw bytes via data= (possibly gzipped)
+            import json as _json
+            body = call_args.kwargs.get("data") or call_args.kwargs.get("json")
+            if isinstance(body, (bytes, bytearray)):
+                try:
+                    import gzip
+                    body = gzip.decompress(body)
+                except Exception:
+                    pass
+                sent = _json.loads(body)
+            else:
+                sent = body
+            sent_points = sent["points"]
             assert len(sent_points) == 2
             assert sent_points[0]["metric"] == "temp"
             assert sent_points[1]["metric"] == "humidity"
