@@ -24,8 +24,8 @@ Usage:
         ("pressure", 1013.25),
     ])
 
-    # Session recording
-    with px.session("motor-test-001"):
+    # Run recording
+    with px.run("motor-test-001"):
         while True:
             px.send("temperature", read_temp())
             time.sleep(0.01)
@@ -110,8 +110,9 @@ class Plexus:
         self.retry_config = retry_config or RetryConfig()
         self._max_buffer_size = max_buffer_size
 
-        self._session_id: Optional[str] = None
+        self._run_id: Optional[str] = None
         self._session: Optional[requests.Session] = None
+        self._store_frames: bool = False
 
         # Typed command registry — commands registered via @px.command decorator
         self._command_registry = CommandRegistry()
@@ -183,8 +184,8 @@ class Plexus:
         }
         if tags:
             point["tags"] = tags
-        if self._session_id:
-            point["session_id"] = self._session_id
+        if self._run_id:
+            point["run_id"] = self._run_id
         return point
 
     def send(
@@ -390,31 +391,34 @@ class Plexus:
         return self._send_points([])
 
     @contextmanager
-    def session(self, session_id: str, tags: Optional[Dict[str, str]] = None):
+    def run(self, run_id: str, tags: Optional[Dict[str, str]] = None, store_frames: bool = False):
         """
-        Context manager for recording a session.
+        Context manager for recording a run.
 
-        All sends within this context will be tagged with the session ID,
+        All sends within this context will be tagged with the run ID,
         making it easy to replay and analyze later.
 
         Args:
-            session_id: Unique identifier for this session (e.g., "motor-test-001")
-            tags: Optional tags to apply to all points in this session
+            run_id: Unique identifier for this run (e.g., "motor-test-001")
+            tags: Optional tags to apply to all points in this run
+            store_frames: If True, camera frames are uploaded to the Plexus API
+                         for persistent storage alongside the live WebSocket stream.
 
         Example:
-            with px.session("motor-test-001"):
+            with px.run("motor-test-001", store_frames=True):
                 while True:
                     px.send("temperature", read_temp())
                     time.sleep(0.01)
         """
-        self._session_id = session_id
+        self._run_id = run_id
+        self._store_frames = store_frames
 
-        # Notify API that session started
+        # Notify API that run started
         try:
             self._get_session().post(
-                f"{self.endpoint}/api/sessions",
+                f"{self.endpoint}/api/runs",
                 json={
-                    "session_id": session_id,
+                    "run_id": run_id,
                     "source_id": self.source_id,
                     "status": "started",
                     "tags": tags,
@@ -423,17 +427,17 @@ class Plexus:
                 timeout=self.timeout,
             )
         except Exception as e:
-            logger.debug(f"Session start notification failed: {e}")
+            logger.debug(f"Run start notification failed: {e}")
 
         try:
             yield
         finally:
-            # Notify API that session ended
+            # Notify API that run ended
             try:
                 self._get_session().post(
-                    f"{self.endpoint}/api/sessions",
+                    f"{self.endpoint}/api/runs",
                     json={
-                        "session_id": session_id,
+                        "run_id": run_id,
                         "source_id": self.source_id,
                         "status": "ended",
                         "timestamp": time.time(),
@@ -441,8 +445,9 @@ class Plexus:
                     timeout=self.timeout,
                 )
             except Exception as e:
-                logger.debug(f"Session end notification failed: {e}")
-            self._session_id = None
+                logger.debug(f"Run end notification failed: {e}")
+            self._run_id = None
+            self._store_frames = False
 
     def command(self, name: str, description: str = ""):
         """

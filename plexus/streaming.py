@@ -13,7 +13,9 @@ import asyncio
 import base64
 import json
 import logging
+import threading
 import time
+from io import BytesIO
 from typing import Optional, Callable, List, Dict, Any, TYPE_CHECKING
 
 from websockets.exceptions import ConnectionClosed
@@ -26,6 +28,36 @@ if TYPE_CHECKING:
     from plexus.buffer import BufferBackend
 
 logger = logging.getLogger(__name__)
+
+
+def _upload_frame_async(endpoint: str, api_key: str, frame, source_id: str, run_id: str = None):
+    """Upload a single frame to /api/frames in a background thread."""
+    def _do_upload():
+        try:
+            import requests
+            files = {"frame": ("frame.jpg", BytesIO(frame.data), "image/jpeg")}
+            data = {
+                "source_id": source_id,
+                "camera_id": frame.camera_id,
+                "timestamp": str(int(frame.timestamp * 1000)),
+            }
+            if run_id:
+                data["run_id"] = run_id
+            if frame.tags:
+                data["tags"] = json.dumps(frame.tags)
+
+            requests.post(
+                f"{endpoint}/api/frames",
+                files=files,
+                data=data,
+                headers={"x-api-key": api_key},
+                timeout=10,
+            )
+        except Exception as e:
+            logger.debug(f"Frame upload error: {e}")
+
+    t = threading.Thread(target=_do_upload, daemon=True)
+    t.start()
 
 
 class StreamManager:
@@ -51,6 +83,12 @@ class StreamManager:
         persist_fn: Optional[Callable[[List[Dict[str, Any]]], Any]] = None,
         error_report_fn: Optional[Callable] = None,
         buffer: Optional["BufferBackend"] = None,
+        store_frames: bool = False,
+        endpoint: str = "",
+        api_key: str = "",
+        source_id: str = "",
+        run_id_fn: Optional[Callable[[], Optional[str]]] = None,
+        store_frames_fn: Optional[Callable[[], bool]] = None,
     ):
         self.sensor_hub = sensor_hub
         self.camera_hub = camera_hub
@@ -60,6 +98,12 @@ class StreamManager:
         self.persist_fn = persist_fn
         self.error_report_fn = error_report_fn
         self.buffer = buffer
+        self.store_frames = store_frames
+        self._endpoint = endpoint
+        self._api_key = api_key
+        self._source_id = source_id
+        self._run_id_fn = run_id_fn
+        self._store_frames_fn = store_frames_fn
 
         self._active_streams: Dict[str, asyncio.Task] = {}
         self._active_camera_streams: Dict[str, asyncio.Task] = {}
@@ -206,6 +250,10 @@ class StreamManager:
         camera_id = data.get("camera_id")
         frame_rate = data.get("frame_rate", 10)
 
+        # Allow dashboard to enable frame persistence per-stream
+        if data.get("store_frames"):
+            self.store_frames = True
+
         if not self.camera_hub:
             self.on_status("No cameras configured")
             return
@@ -247,6 +295,28 @@ class StreamManager:
                             "height": frame.height,
                             "timestamp": int(frame.timestamp * 1000),
                         }))
+
+                        # Persist frame to storage if recording
+                        should_store = (
+                            self._store_frames_fn() if self._store_frames_fn
+                            else self.store_frames
+                        )
+                        if should_store and frame.data:
+                            try:
+                                run_id = (
+                                    self._run_id_fn() if self._run_id_fn
+                                    else None
+                                )
+                                _upload_frame_async(
+                                    endpoint=self._endpoint,
+                                    api_key=self._api_key,
+                                    frame=frame,
+                                    source_id=self._source_id,
+                                    run_id=run_id,
+                                )
+                            except Exception as e:
+                                logger.debug(f"Frame upload failed: {e}")
+
                     await asyncio.sleep(interval)
             except asyncio.CancelledError:
                 pass

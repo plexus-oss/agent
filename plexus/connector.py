@@ -140,6 +140,9 @@ class PlexusConnector:
             persist_fn=self._persist_async,
             error_report_fn=self.report_error,
             buffer=self._buffer,
+            endpoint=self.endpoint,
+            api_key=self.api_key,
+            source_id=self.source_id,
         )
 
     # =========================================================================

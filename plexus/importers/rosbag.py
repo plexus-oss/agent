@@ -23,7 +23,7 @@ Usage:
     # Or upload directly to Plexus
     from plexus import Plexus
     px = Plexus()
-    importer.upload_to_plexus(px, session_id="robot-test-001")
+    importer.upload_to_plexus(px, run_id="robot-test-001")
 """
 
 from dataclasses import dataclass, field
@@ -595,7 +595,7 @@ class RosbagImporter:
     def upload_to_plexus(
         self,
         client,  # Plexus client
-        session_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         batch_size: int = 100,
         progress_callback: Optional[callable] = None,
     ) -> Dict[str, Any]:
@@ -604,7 +604,7 @@ class RosbagImporter:
 
         Args:
             client: Plexus client instance
-            session_id: Optional session ID for grouping data
+            run_id: Optional run ID for grouping data
             batch_size: Number of points per API call
             progress_callback: Optional callback(uploaded, total) for progress
 
@@ -615,7 +615,7 @@ class RosbagImporter:
             from plexus import Plexus
             px = Plexus()
             importer = RosbagImporter("data.bag")
-            stats = importer.upload_to_plexus(px, session_id="test-001")
+            stats = importer.upload_to_plexus(px, run_id="test-001")
             print(f"Uploaded {stats['metrics_uploaded']} metrics")
         """
         schema = self.detect_schema()
@@ -623,10 +623,10 @@ class RosbagImporter:
         uploaded = 0
         errors = 0
 
-        # Use session context if provided
+        # Use run context if provided
         from contextlib import nullcontext
 
-        context = client.session(session_id) if session_id else nullcontext()
+        context = client.run(run_id) if run_id else nullcontext()
 
         with context:
             for batch in self.iter_metrics(batch_size=batch_size):
@@ -649,7 +649,7 @@ class RosbagImporter:
         return {
             "bag_path": str(self.bag_path),
             "bag_type": self._bag_type,
-            "session_id": session_id,
+            "run_id": run_id,
             "metrics_uploaded": uploaded,
             "errors": errors,
             "duration_sec": schema.duration_sec,

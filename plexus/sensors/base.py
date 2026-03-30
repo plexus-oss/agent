@@ -291,14 +291,14 @@ class SensorHub:
     def run(
         self,
         client,  # Plexus client
-        session_id: Optional[str] = None,
+        run_id: Optional[str] = None,
     ) -> None:
         """
         Run the sensor hub, streaming data to Plexus.
 
         Args:
             client: Plexus client instance
-            session_id: Optional session ID for grouping data
+            run_id: Optional run ID for grouping data
         """
         self.setup()
         self._running = True
@@ -311,7 +311,7 @@ class SensorHub:
         last_read = {id(s): 0.0 for s in self.sensors}
 
         try:
-            context = client.session(session_id) if session_id else _nullcontext()
+            context = client.run(run_id) if run_id else _nullcontext()
 
             with context:
                 while self._running:
