@@ -127,19 +127,16 @@ def detect_cameras() -> Tuple[Optional["CameraHub"], List]:
 
     Returns:
         (camera_hub or None, list of detected camera info objects)
+
+    Raises:
+        ImportError: If camera libraries (picamera2, opencv-python) are missing.
     """
-    try:
-        from plexus.cameras import scan_cameras, auto_cameras
-        cameras = scan_cameras()
-        if cameras:
-            hub = auto_cameras()
-            return hub, cameras
-        return None, []
-    except ImportError:
-        return None, []
-    except Exception as e:
-        logger.debug(f"Camera detection failed: {e}")
-        return None, []
+    from plexus.cameras import scan_cameras, auto_cameras
+    cameras = scan_cameras()
+    if cameras:
+        hub = auto_cameras()
+        return hub, cameras
+    return None, []
 
 
 def detect_can() -> Tuple[Optional[List["DetectedCAN"]], List["DetectedCAN"], List["DetectedCAN"]]:

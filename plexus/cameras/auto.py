@@ -137,7 +137,26 @@ def scan_cameras() -> List[DetectedCamera]:
 
     Returns:
         List of all detected cameras.
+
+    Raises:
+        ImportError: If neither picamera2 nor opencv-python is installed.
     """
+    has_picamera2 = True
+    has_cv2 = True
+
+    try:
+        import picamera2  # noqa: F401
+    except ImportError:
+        has_picamera2 = False
+
+    try:
+        import cv2  # noqa: F401
+    except ImportError:
+        has_cv2 = False
+
+    if not has_picamera2 and not has_cv2:
+        raise ImportError("No camera library installed (picamera2 or opencv-python)")
+
     cameras = []
 
     pi_cameras = scan_pi_cameras()

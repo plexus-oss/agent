@@ -96,6 +96,14 @@ def dim(msg: str):
     click.secho(f"  {msg}", fg=Style.DIM)
 
 
+def _pip_install_cmd(package: str) -> str:
+    """Return the right install command for the user's environment."""
+    import shutil
+    if shutil.which("pipx") and ".local/share/pipx" in (sys.prefix or ""):
+        return f"pipx inject plexus-agent {package}"
+    return f"pip install {package}"
+
+
 def label(key: str, value: str, key_width: int = 12):
     """Print a key-value pair."""
     click.echo(f"  {key:<{key_width}} {value}")
@@ -663,7 +671,8 @@ def start(key: Optional[str], device_id: Optional[str], scan: bool):
         except PermissionError:
             warning("I2C permission denied (run: sudo usermod -aG i2c $USER)")
         except ImportError:
-            dim("I2C scanning unavailable (pip install smbus2)")
+            warning("I2C sensor support not installed")
+            dim(f"Install with: {_pip_install_cmd('smbus2')}")
         except OSError as e:
             warning(f"I2C bus error: {e}")
         except Exception as e:
@@ -704,9 +713,11 @@ def start(key: Optional[str], device_id: Optional[str], scan: bool):
     try:
         camera_hub, cameras = detect_cameras()
     except ImportError:
-        logger.debug("Camera support not installed (opencv-python missing)")
+        warning("Camera support not installed")
+        dim(f"Install with: {_pip_install_cmd('picamera2')}")
+        dim(f"         or: {_pip_install_cmd('opencv-python')}")
     except Exception as e:
-        logger.debug("Camera detection failed: %s", e)
+        warning(f"Camera detection failed: {e}")
 
     # CAN
     can_adapters, up_can, down_can = detect_can()
