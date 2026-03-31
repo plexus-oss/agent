@@ -3,8 +3,7 @@
 Plexus Demo — Field Unit (Pi #2)
 
 The handheld Pi. People pick this up, tilt it, and watch the dashboard react.
-Has an IMU for motion tracking and a servo motor that can be commanded
-from the dashboard.
+Has an IMU for motion tracking and a servo motor.
 
 Hardware:
     - Raspberry Pi 4
@@ -33,9 +32,7 @@ Dashboard alerts to set up:
 import time
 import math
 import os
-import subprocess
 import threading
-from plexus import Plexus, param
 from plexus.connector import run_connector
 from plexus.sensors.base import BaseSensor, SensorReading
 
@@ -211,97 +208,6 @@ class SystemSensor(BaseSensor):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Plexus client + typed commands
-# ─────────────────────────────────────────────────────────────────────────────
-
-px = Plexus()
-
-state = {
-    "mode": "nominal",
-    "sample_rate_hz": 20,
-}
-
-
-@px.command("set_mode", "Switch operational mode")
-@param("mode", type="enum", choices=["nominal", "safe", "diagnostic", "high_rate"])
-def set_mode(mode):
-    rate_map = {"nominal": 20, "safe": 1, "diagnostic": 50, "high_rate": 100}
-    state["mode"] = mode
-    state["sample_rate_hz"] = rate_map[mode]
-    if imu_sensor:
-        imu_sensor.sample_rate = rate_map[mode]
-    return {"mode": mode, "sample_rate_hz": rate_map[mode]}
-
-
-@px.command("rotate_servo", "Actuate the servo motor — like repointing an antenna")
-@param("angle", type="float", min=0, max=180, step=5, unit="degrees", default=90)
-def rotate_servo_cmd(angle):
-    move_servo(angle)
-    return {"angle": servo_angle, "status": "moved"}
-
-
-@px.command("set_sample_rate", "Adjust telemetry sample rate")
-@param("hz", type="float", min=1, max=100, step=1, unit="Hz", default=20)
-def set_sample_rate(hz):
-    state["sample_rate_hz"] = hz
-    if imu_sensor:
-        imu_sensor.sample_rate = hz
-    return {"sample_rate_hz": hz, "status": "applied"}
-
-
-@px.command("identify", "Sweep servo + blink ACT LED — find this device")
-def identify():
-    sweep_servo()
-    # Also try onboard LED
-    try:
-        led_path = "/sys/class/leds/ACT/brightness"
-        if os.path.exists(led_path):
-            for _ in range(5):
-                with open(led_path, "w") as f:
-                    f.write("1")
-                time.sleep(0.15)
-                with open(led_path, "w") as f:
-                    f.write("0")
-                time.sleep(0.15)
-    except Exception:
-        pass
-    return {"identified": True, "method": "servo sweep + ACT LED"}
-
-
-@px.command("run_diagnostic", "Execute onboard diagnostic check")
-@param("subsystem", type="enum", choices=["imu", "servo", "comms", "all"], default="all")
-def run_diagnostic(subsystem):
-    results = {}
-    if subsystem in ("imu", "all"):
-        results["imu"] = {
-            "status": "ok" if imu_sensor and imu_sensor.is_available() else "fault",
-            "sample_rate": state["sample_rate_hz"],
-            "mode": state["mode"],
-        }
-    if subsystem in ("servo", "all"):
-        results["servo"] = {"status": "ok" if servo_pwm else "not available", "angle": servo_angle}
-        if servo_pwm:
-            # Quick test: center → 45 → center
-            move_servo(45)
-            time.sleep(0.3)
-            move_servo(90)
-    if subsystem in ("comms", "all"):
-        try:
-            result = subprocess.run(["ping", "-c", "1", "-W", "2", "8.8.8.8"], capture_output=True, timeout=5)
-            latency = None
-            for line in result.stdout.decode().split("\n"):
-                if "time=" in line:
-                    try:
-                        latency = float(line.split("time=")[1].split(" ")[0])
-                    except Exception:
-                        pass
-            results["comms"] = {"status": "ok" if result.returncode == 0 else "degraded", "latency_ms": latency}
-        except Exception:
-            results["comms"] = {"status": "unknown"}
-    return {"subsystem": subsystem, "results": results}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -313,7 +219,7 @@ if __name__ == "__main__":
     sensor_hub = SensorHub()
 
     # IMU
-    imu_sensor = MissionIMU(sample_rate=state["sample_rate_hz"])
+    imu_sensor = MissionIMU(sample_rate=20.0)
     if imu_sensor.is_available():
         sensor_hub.add(imu_sensor)
         print(f"[+] IMU detected at 0x{imu_sensor._address:02x}")
@@ -332,10 +238,7 @@ if __name__ == "__main__":
     print(f"  FIELD UNIT  —  {SOURCE_ID}")
     print(f"  IMU:   {'yes' if imu_sensor else 'no'}")
     print(f"  Servo: {'yes' if servo_ok else 'no'}")
-    print(f"  Mode:  {state['mode']} ({state['sample_rate_hz']} Hz)")
     print(f"{'=' * 50}")
-    print("\n  Commands: set_mode, rotate_servo, set_sample_rate,")
-    print("           identify, run_diagnostic")
     print("\n  Suggested alerts:")
     print("    imu.accel.magnitude > 1.5  (warning — tilted)")
     print("    imu.accel.magnitude > 3.0  (critical — shaken)")
@@ -345,7 +248,6 @@ if __name__ == "__main__":
         run_connector(
             source_id=SOURCE_ID,
             sensor_hub=sensor_hub,
-            command_registry=px.commands,
             on_status=lambda msg: print(f"  [{time.strftime('%H:%M:%S')}] {msg}"),
         )
     finally:

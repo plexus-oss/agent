@@ -67,7 +67,6 @@ plexus/
 │   ├── mavlink.py  # MAVLink (drones)
 │   ├── mqtt.py     # MQTT bridge
 │   └── camera.py   # Camera capture
-└── commands.py     # Remote command framework
 ```
 
 ## Key Conventions

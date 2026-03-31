@@ -26,7 +26,6 @@ Auto-Detection:
 
 from plexus.client import Plexus
 from plexus.config import load_config, save_config
-from plexus.typed_commands import param, CommandRegistry
 
-__version__ = "0.12.0"
-__all__ = ["Plexus", "param", "CommandRegistry", "load_config", "save_config"]
+__version__ = "0.13.0"
+__all__ = ["Plexus", "load_config", "save_config"]

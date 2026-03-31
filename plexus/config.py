@@ -56,8 +56,6 @@ DEFAULT_CONFIG = {
     "org_id": None,
     "source_name": None,
     "endpoint": None,
-    "command_allowlist": None,
-    "command_denylist": None,
     "persistent_buffer": True,
     "sensors": None,
 }
@@ -153,18 +151,6 @@ def require_login() -> None:
         raise RuntimeError(
             "Not logged in. Run 'plexus start' to connect your account."
         )
-
-
-def get_command_allowlist() -> Optional[list]:
-    """Get command allowlist from config. If set, only matching commands will execute."""
-    config = load_config()
-    return config.get("command_allowlist")
-
-
-def get_command_denylist() -> Optional[list]:
-    """Get command denylist from config. Matching commands will be blocked."""
-    config = load_config()
-    return config.get("command_denylist")
 
 
 def get_persistent_buffer() -> bool:

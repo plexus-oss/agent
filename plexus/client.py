@@ -50,8 +50,6 @@ from plexus.config import (
     get_source_id,
     require_login,
 )
-from plexus.typed_commands import CommandRegistry
-
 logger = logging.getLogger(__name__)
 
 # Flexible value type - supports any JSON-serializable value
@@ -113,9 +111,6 @@ class Plexus:
         self._run_id: Optional[str] = None
         self._session: Optional[requests.Session] = None
         self._store_frames: bool = False
-
-        # Typed command registry — commands registered via @px.command decorator
-        self._command_registry = CommandRegistry()
 
         # Pluggable buffer backend for failed sends
         if persistent_buffer:
@@ -448,41 +443,6 @@ class Plexus:
                 logger.debug(f"Run end notification failed: {e}")
             self._run_id = None
             self._store_frames = False
-
-    def command(self, name: str, description: str = ""):
-        """
-        Decorator to register a typed command.
-
-        The command schema (name, params, types, constraints) is advertised
-        to the dashboard on connect. The dashboard auto-generates UI controls
-        (sliders, dropdowns, toggles) from the schema.
-
-        Use with @param decorator for typed parameters:
-
-            @px.command("set_speed")
-            @param("rpm", type="float", min=0, max=10000, unit="RPM")
-            def set_motor_speed(rpm):
-                motor.set_speed(rpm)
-                return {"actual_rpm": motor.read_rpm()}
-
-        Args:
-            name: Command name (used in API and dashboard)
-            description: Human-readable description (falls back to docstring)
-        """
-        from typing import Callable
-
-        def decorator(fn: Callable) -> Callable:
-            params = getattr(fn, "_plexus_params", [])
-            doc = description or (fn.__doc__ or "").strip()
-            self._command_registry.register(name, fn, doc, params)
-            return fn
-
-        return decorator
-
-    @property
-    def commands(self) -> CommandRegistry:
-        """Access the typed command registry."""
-        return self._command_registry
 
     def close(self):
         """Close the client and release resources."""

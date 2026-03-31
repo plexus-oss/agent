@@ -22,8 +22,6 @@ Dashboard alerts to set up:
 
 import time
 import os
-import subprocess
-from plexus import Plexus, param
 from plexus.connector import run_connector
 from plexus.sensors.base import BaseSensor, SensorReading
 
@@ -64,78 +62,6 @@ class SystemSensor(BaseSensor):
         except Exception:
             pass
         return readings
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Plexus client + typed commands
-# ─────────────────────────────────────────────────────────────────────────────
-
-px = Plexus()
-
-state = {
-    "mode": "nominal",
-    "sample_rate_hz": 5,
-}
-
-
-@px.command("set_mode", "Switch operational mode")
-@param("mode", type="enum", choices=["nominal", "safe", "diagnostic", "high_rate"])
-def set_mode(mode):
-    rate_map = {"nominal": 5, "safe": 1, "diagnostic": 20, "high_rate": 50}
-    state["mode"] = mode
-    state["sample_rate_hz"] = rate_map[mode]
-    return {"mode": mode, "sample_rate_hz": rate_map[mode]}
-
-
-@px.command("capture_snapshot", "Capture a camera frame on demand")
-def capture_snapshot():
-    if camera_hub:
-        frames = camera_hub.capture_all()
-        if frames:
-            return {"captured": True, "cameras": len(frames)}
-    return {"captured": False, "reason": "no camera available"}
-
-
-@px.command("identify", "Blink onboard LED — find this device in a rack")
-def identify():
-    try:
-        led_path = "/sys/class/leds/ACT/brightness"
-        if os.path.exists(led_path):
-            for _ in range(5):
-                with open(led_path, "w") as f:
-                    f.write("1")
-                time.sleep(0.2)
-                with open(led_path, "w") as f:
-                    f.write("0")
-                time.sleep(0.2)
-            return {"identified": True, "method": "ACT LED"}
-    except PermissionError:
-        pass
-    return {"identified": False, "reason": "no LED access (try sudo)"}
-
-
-@px.command("run_diagnostic", "Execute onboard diagnostic check")
-@param("subsystem", type="enum", choices=["env", "camera", "comms", "all"], default="all")
-def run_diagnostic(subsystem):
-    results = {}
-    if subsystem in ("env", "all"):
-        results["env_sensor"] = {"status": "ok" if bme_available else "not connected"}
-    if subsystem in ("camera", "all"):
-        results["camera"] = {"status": "ok" if camera_hub else "unavailable"}
-    if subsystem in ("comms", "all"):
-        try:
-            result = subprocess.run(["ping", "-c", "1", "-W", "2", "8.8.8.8"], capture_output=True, timeout=5)
-            latency = None
-            for line in result.stdout.decode().split("\n"):
-                if "time=" in line:
-                    try:
-                        latency = float(line.split("time=")[1].split(" ")[0])
-                    except Exception:
-                        pass
-            results["comms"] = {"status": "ok" if result.returncode == 0 else "degraded", "latency_ms": latency}
-        except Exception:
-            results["comms"] = {"status": "unknown"}
-    return {"subsystem": subsystem, "results": results}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -196,8 +122,6 @@ if __name__ == "__main__":
     print(f"  Camera: {'yes' if camera_hub else 'no'}")
     print(f"  BME280: {'yes' if bme_available else 'no'}")
     print(f"{'=' * 50}")
-    print("\n  Commands: set_mode, capture_snapshot, identify,")
-    print("           run_diagnostic")
     print("\n  Suggested alerts:")
     print("    env.temperature > 30  (warning)")
     print("    env.temperature > 35  (critical)")
@@ -207,6 +131,5 @@ if __name__ == "__main__":
         source_id=SOURCE_ID,
         sensor_hub=sensor_hub,
         camera_hub=camera_hub,
-        command_registry=px.commands,
         on_status=lambda msg: print(f"  [{time.strftime('%H:%M:%S')}] {msg}"),
     )

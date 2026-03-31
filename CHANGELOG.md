@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-03-31
+
+### Removed
+
+- Auto-dashboard creation on first run — dashboards are now created by users in the UI
+- `_build_panels()` and `_launch_auto_dashboard()` internals (~230 lines)
+- `dashboard_id` from agent config
+
+### Changed
+
+- Status block now shows app URL instead of auto-generated dashboard link
+
 ## [0.10.0] - 2026-03-26
 
 ### Changed
@@ -151,6 +163,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MAVLink adapter for drone telemetry
 - Source ID update support
 
+[0.13.0]: https://github.com/plexus-oss/agent/releases/tag/v0.13.0
+[0.10.0]: https://github.com/plexus-oss/agent/releases/tag/v0.10.0
 [0.9.6]: https://github.com/plexus-oss/agent/releases/tag/v0.9.6
 [0.7.4]: https://github.com/plexus-oss/agent/releases/tag/v0.7.4
 [0.7.3]: https://github.com/plexus-oss/agent/releases/tag/v0.7.3

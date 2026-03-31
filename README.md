@@ -28,7 +28,6 @@ Get an API key from [app.plexus.company](https://app.plexus.company) → Devices
 - **Auto-detect hardware** — sensors, cameras, CAN interfaces found and configured automatically
 - **12+ sensor drivers** — IMU, environmental, current/power, ADC, magnetometer, GPS, and more
 - **Adapters** — CAN bus (with DBC decoding), MAVLink (drones/UAVs), MQTT bridge, USB cameras
-- **Commands and remote control** — declare typed commands, get auto-generated UI controls on the dashboard
 - **Offline buffering** — local buffer with automatic retry when network drops
 
 Works on any Linux system — Raspberry Pi, edge compute nodes, test rigs, fleet vehicles, ground stations.
@@ -168,36 +167,6 @@ px.send_batch([
 ```
 
 See [API.md](https://github.com/plexus-oss/agent/blob/main/API.md) for curl, JavaScript, Go, and Bash examples.
-
-## Commands & Remote Control
-
-Declare typed commands on your device. The dashboard auto-generates UI controls — sliders, dropdowns, toggles — from the schema.
-
-```python
-from plexus import Plexus, param
-
-px = Plexus()
-
-@px.command("set_speed", description="Set motor speed")
-@param("rpm", type="float", min=0, max=10000, unit="rpm")
-@param("ramp_time", type="float", min=0.1, max=10.0, default=1.0, unit="s")
-async def set_speed(rpm, ramp_time):
-    motor.set_rpm(rpm, ramp=ramp_time)
-    return {"actual_rpm": motor.read_rpm()}
-
-@px.command("set_mode", description="Switch operating mode")
-@param("mode", type="enum", choices=["idle", "run", "calibrate"])
-async def set_mode(mode):
-    controller.set_mode(mode)
-```
-
-Commands are sent to the device over WebSocket and executed in real time. The dashboard shows:
-
-- Parameter inputs with validation (min/max, type checking, required fields)
-- Execution status and results
-- Command history
-
-This works the same way in the C SDK — see the [C SDK README](https://github.com/plexus-oss/c-sdk) for the equivalent API.
 
 ## Sessions
 

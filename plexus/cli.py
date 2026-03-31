@@ -150,7 +150,7 @@ def status_line(msg: str):
     click.echo(f"  {msg}")
 
 
-def _print_status_block(device_name: str, sensors: list, dashboard_url: Optional[str]):
+def _print_status_block(device_name: str, sensors: list, endpoint: str):
     """Print the compact post-connect status block."""
     click.echo()
     success(f"{device_name} connected")
@@ -174,8 +174,7 @@ def _print_status_block(device_name: str, sensors: list, dashboard_url: Optional
 
     label("Metrics", metrics_str)
     label("Mode", "Live (record from dashboard)")
-    if dashboard_url:
-        label("Dashboard", dashboard_url)
+    label("Dashboard", endpoint)
     click.echo()
 
 
@@ -429,122 +428,6 @@ def _startup_wizard(endpoint: str) -> str:
     return api_key
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Auto-Dashboard
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_panels(source_id: str, sensors: list, cameras: list) -> list:
-    """Map detected hardware to dashboard panel definitions."""
-    panels = []
-    y = 0
-
-    def _add(panel_type, title, metrics, w=12, h=6, config=None):
-        nonlocal y
-        panels.append({
-            "id": f"auto-{len(panels) + 1}",
-            "type": panel_type,
-            "title": title,
-            "metrics": [f"{source_id}:{m}" for m in metrics],
-            "config": config or {"decimals": 2, "showLegend": True, "showGrid": True},
-            "layout": {"x": 0, "y": y, "w": w, "h": h},
-        })
-        y += h
-
-    # Group metrics by kind
-    all_metrics = []
-    for s in sensors:
-        metrics = getattr(s, 'metrics', None) or (
-            getattr(s.driver, 'metrics', None) if hasattr(s, 'driver') else None
-        )
-        if metrics:
-            all_metrics.extend(metrics)
-
-    metric_set = set(all_metrics)
-
-    # Acceleration (multi-series)
-    accel = [m for m in all_metrics if m.startswith("accel")]
-    if accel:
-        _add("line", "Acceleration", accel, config={
-            "unit": "m/s²", "decimals": 3, "showLegend": True, "showGrid": True,
-        })
-
-    # Gyroscope (multi-series)
-    gyro = [m for m in all_metrics if m.startswith("gyro")]
-    if gyro:
-        _add("line", "Gyroscope", gyro, config={
-            "unit": "°/s", "decimals": 3, "showLegend": True, "showGrid": True,
-        })
-
-    # Environment
-    for metric, title, unit in [
-        ("temperature", "Temperature", "°C"),
-        ("humidity", "Humidity", "%"),
-        ("pressure", "Pressure", "hPa"),
-    ]:
-        if metric in metric_set:
-            _add("line", title, [metric], config={
-                "unit": unit, "decimals": 1, "showLegend": True, "showGrid": True,
-            })
-
-    # Power
-    for metric, title, unit in [
-        ("voltage", "Voltage", "V"),
-        ("current", "Current", "A"),
-        ("power", "Power", "W"),
-    ]:
-        if metric in metric_set:
-            _add("line", title, [metric], config={
-                "unit": unit, "decimals": 2, "showLegend": True, "showGrid": True,
-            })
-
-    # Battery
-    if "battery" in metric_set:
-        _add("stat", "Battery", ["battery"], w=6, h=4, config={
-            "unit": "%", "decimals": 0, "showProgressBar": True,
-        })
-
-    # System stats
-    for metric, title in [
-        ("cpu.usage_pct", "CPU Usage"),
-        ("memory.used_pct", "Memory Usage"),
-    ]:
-        if metric in metric_set:
-            _add("stat", title, [metric], w=6, h=4, config={
-                "unit": "%", "decimals": 1, "showProgressBar": True,
-            })
-
-    if "cpu.temperature" in metric_set:
-        _add("line", "CPU Temperature", ["cpu.temperature"], config={
-            "unit": "°C", "decimals": 1, "showLegend": True, "showGrid": True,
-        })
-
-    # GPS
-    if "latitude" in metric_set and "longitude" in metric_set:
-        _add("map", "Location", ["latitude", "longitude"], h=8, config={
-            "latMetric": f"{source_id}:latitude",
-            "lngMetric": f"{source_id}:longitude",
-            "showPath": True,
-        })
-
-    # Cameras
-    for i, cam in enumerate(cameras):
-        cam_name = getattr(cam, "name", f"Camera {i + 1}")
-        _add("video", cam_name, [], h=8, config={
-            "cameraId": f"{source_id}:camera_{i}",
-        })
-
-    # Remaining metrics that weren't already covered
-    covered = set()
-    for p in panels:
-        for m in p["metrics"]:
-            covered.add(m.split(":")[-1])
-    remaining = [m for m in all_metrics if m not in covered]
-    for metric in remaining:
-        _add("line", metric.replace("_", " ").replace(".", " ").title(), [metric])
-
-    return panels
-
-
 def _start_metric_readout(sensor_hub):
     """Show live metric values in the terminal."""
     num_metrics = 0
@@ -582,83 +465,6 @@ def _start_metric_readout(sensor_hub):
             time.sleep(2)
 
     thread = threading.Thread(target=_readout, daemon=True)
-    thread.start()
-
-
-def _launch_auto_dashboard(api_key: str, endpoint: str, source_id: str, sensors: list, cameras: list):
-    """Launch AI-powered dashboard creation in a background thread.
-
-    Skips if a dashboard_id is already saved in config (reconnect case).
-    Shows a spinner while generating, then prints a clickable URL.
-    """
-    # Check if we already have a dashboard for this device
-    config = load_config()
-    existing_dashboard = config.get("dashboard_id")
-    if existing_dashboard:
-        dashboard_url = f"{endpoint}/dashboards/{existing_dashboard}"
-        hint(f"Dashboard {Style.ARROW} {dashboard_url}")
-        return
-
-    def _create():
-        import requests
-        try:
-            # Wait for data + schema capture to complete
-            time.sleep(8)
-
-            spinner = Spinner("Building dashboard...")
-            spinner.start()
-
-            headers = {
-                "x-api-key": api_key,
-                "Content-Type": "application/json",
-            }
-
-            dashboard_id = None
-            dashboard_url = None
-
-            # Try AI-powered dashboard generation
-            resp = requests.post(
-                f"{endpoint}/api/auth/cli/generate-dashboard",
-                headers=headers,
-                json={"source_slug": source_id},
-                timeout=30,
-            )
-
-            if resp.ok:
-                data = resp.json()
-                dashboard = data.get("dashboard", {})
-                dashboard_id = dashboard.get("id")
-                dashboard_url = dashboard.get("url", f"{endpoint}/dashboards/{dashboard_id}")
-            else:
-                # If not enough metrics yet, create a basic dashboard
-                logger.debug("AI dashboard: %s %s", resp.status_code, resp.text)
-
-                resp = requests.post(
-                    f"{endpoint}/api/dashboards",
-                    headers=headers,
-                    json={"name": f"{source_id} Dashboard"},
-                    timeout=15,
-                )
-                if resp.ok:
-                    dashboard = resp.json().get("dashboard", {})
-                    dashboard_id = dashboard.get("id")
-                    if dashboard_id:
-                        dashboard_url = f"{endpoint}/dashboards/{dashboard_id}"
-
-            if dashboard_id and dashboard_url:
-                # Save to config so we don't recreate on next run
-                cfg = load_config()
-                cfg["dashboard_id"] = dashboard_id
-                save_config(cfg)
-
-                spinner.stop(f"Dashboard ready {Style.ARROW} {dashboard_url}", success_status=True)
-            else:
-                spinner.stop("Dashboard generation failed", success_status=False)
-
-        except Exception as e:
-            logger.debug("Auto-dashboard failed: %s", e)
-
-    thread = threading.Thread(target=_create, daemon=True)
     thread.start()
 
 
@@ -904,20 +710,7 @@ def start(key: Optional[str], device_id: Optional[str], scan: bool):
     cfg = load_config()
     device_name = cfg.get("source_name") or source_id
 
-    # Get dashboard URL from config (saved from previous run)
-    dashboard_id = cfg.get("dashboard_id")
-    dashboard_url = f"{endpoint}/dashboards/{dashboard_id}" if dashboard_id else None
-
-    # Launch dashboard creation in background (first run or if missing)
-    _launch_auto_dashboard(
-        api_key=api_key,
-        endpoint=endpoint,
-        source_id=source_id,
-        sensors=sensors,
-        cameras=cameras,
-    )
-
-    _print_status_block(device_name, sensors, dashboard_url)
+    _print_status_block(device_name, sensors, endpoint)
 
     # ── Live metric readout (background) ────────────────────────────────
     if sensor_hub and not use_tui:

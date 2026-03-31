@@ -212,8 +212,6 @@ Devices authenticate using an API key:
 | `start_session` | Start recording to a session         |
 | `stop_session`  | Stop recording                       |
 | `configure`     | Configure sensor (e.g., sample rate) |
-| `execute`       | Run a shell command                  |
-| `cancel`        | Cancel running command               |
 | `ping`          | Keepalive request                    |
 
 ### Message Types (Device → Dashboard)
@@ -223,7 +221,6 @@ Devices authenticate using an API key:
 | `telemetry`       | Sensor data points      |
 | `session_started` | Confirm session started |
 | `session_stopped` | Confirm session stopped |
-| `output`          | Command output          |
 | `pong`            | Keepalive response      |
 
 ### Start Streaming
@@ -295,22 +292,6 @@ Devices authenticate using an API key:
     "sample_rate": 50
   }
 }
-```
-
-### Execute Command
-
-```json
-// Dashboard → Device
-{
-  "type": "execute",
-  "id": "cmd-123",
-  "command": "uname -a"
-}
-
-// Device → Dashboard (streamed)
-{"type": "output", "id": "cmd-123", "event": "start", "command": "uname -a"}
-{"type": "output", "id": "cmd-123", "event": "data", "data": "Linux raspberrypi..."}
-{"type": "output", "id": "cmd-123", "event": "exit", "code": 0}
 ```
 
 ## Code Examples

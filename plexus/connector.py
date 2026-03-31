@@ -1,7 +1,7 @@
 """
 Plexus Device Connector
 
-Connects devices to Plexus via WebSocket for real-time streaming and control.
+Connects devices to Plexus via WebSocket for real-time streaming.
 
 Data Flow:
 ┌─────────────────────────────────────────────────────────────────┐
@@ -40,11 +40,9 @@ from typing import Optional, Callable, List, Dict, Any, Tuple, TYPE_CHECKING
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-from plexus.config import get_api_key, get_endpoint, get_source_id, get_org_id, get_command_allowlist, get_command_denylist, get_persistent_buffer
+from plexus.config import get_api_key, get_endpoint, get_source_id, get_org_id, get_persistent_buffer
 from plexus.buffer import SqliteBuffer
-from plexus.commands import CommandExecutor, DEFAULT_COMMAND_DENYLIST
 from plexus.streaming import StreamManager
-from plexus.typed_commands import CommandRegistry
 
 if TYPE_CHECKING:
     from plexus.sensors.base import SensorHub
@@ -62,7 +60,6 @@ class PlexusConnector:
     Supports:
     - Real-time sensor streaming (controlled from dashboard)
     - Camera streaming
-    - Remote command execution
     - Optional data persistence (when recording)
     - Store-and-forward buffering for intermittent connectivity
     """
@@ -79,9 +76,6 @@ class PlexusConnector:
         camera_hub: Optional["CameraHub"] = None,
         can_adapters: Optional[List["DetectedCAN"]] = None,
         mavlink_connections: Optional[List["DetectedMAVLink"]] = None,
-        command_allowlist: Optional[List[str]] = None,
-        command_denylist: Optional[List[str]] = None,
-        command_registry: Optional[CommandRegistry] = None,
         max_reconnect_attempts: Optional[int] = None,
         persistent_buffer: Optional[bool] = None,
         buffer_path: Optional[str] = None,
@@ -90,7 +84,13 @@ class PlexusConnector:
         self.endpoint = (endpoint or get_endpoint()).rstrip("/")
         self.source_id = source_id or get_source_id()
         self.source_name = source_name
-        self.org_id = org_id or get_org_id() or self._resolve_org_id() or "default"
+        resolved_org_id = org_id or get_org_id() or self._resolve_org_id()
+        if not resolved_org_id:
+            raise ValueError(
+                "Could not resolve org_id from API key. "
+                "Check your API key and network connection, or set PLEXUS_ORG_ID."
+            )
+        self.org_id = resolved_org_id
         self.on_status = on_status or (lambda x: None)
         self.sensor_hub = sensor_hub
         self.camera_hub = camera_hub
@@ -119,18 +119,6 @@ class PlexusConnector:
         else:
             self._buffer = None
 
-        # Typed command registry
-        self._typed_commands = command_registry or CommandRegistry()
-
-        # Delegates
-        allowlist = command_allowlist or get_command_allowlist()
-        denylist = (
-            command_denylist if command_denylist is not None
-            else (get_command_denylist() or DEFAULT_COMMAND_DENYLIST)
-        )
-        self._commands = CommandExecutor(
-            allowlist=allowlist, denylist=denylist, on_status=self.on_status,
-        )
         self._streams = StreamManager(
             sensor_hub=sensor_hub,
             camera_hub=camera_hub,
@@ -455,7 +443,7 @@ class PlexusConnector:
     # =========================================================================
 
     async def connect(self):
-        """Connect to Plexus and listen for commands.
+        """Connect to Plexus and stream data.
 
         Uses exponential backoff with jitter on reconnection:
         1s → 2s → 4s → 8s → ... → 60s max, with ±25% jitter.
@@ -506,7 +494,6 @@ class PlexusConnector:
                             {"connection_string": m.connection_string, "transport": m.transport}
                             for m in self.mavlink_connections
                         ] if self.mavlink_connections else [],
-                        "commands": self._typed_commands.get_schemas(),
                     }
 
                     await ws.send(json.dumps(auth_msg))
@@ -583,11 +570,6 @@ class PlexusConnector:
                 "stop_can": lambda d: self._streams.stop_can_stream(d),
                 "start_mavlink": lambda d: self._streams.start_mavlink_stream(d, self._ws),
                 "stop_mavlink": lambda d: self._streams.stop_mavlink_stream(d),
-                "execute": lambda d: self._commands.execute(d, self._ws, lambda: self._running),
-                "typed_command": lambda d: self._typed_commands.execute(
-                    d.get("command", ""), d.get("params", {}), self._ws, d.get("id", "cmd")
-                ),
-                "cancel": lambda _: self._commands.cancel(),
                 "configure": lambda d: self._streams.configure_sensor(d),
                 "configure_camera": lambda d: self._streams.configure_camera(d),
                 "ping": lambda _: self._ws.send(json.dumps({"type": "pong"})),
@@ -609,7 +591,6 @@ class PlexusConnector:
     def disconnect(self):
         """Disconnect and cleanup, flushing any buffered telemetry."""
         self._running = False
-        self._commands.cancel()
         self._streams.cancel_all()
 
         # Cancel any in-progress backlog drain
@@ -645,9 +626,6 @@ def run_connector(
     camera_hub: Optional["CameraHub"] = None,
     can_adapters: Optional[List["DetectedCAN"]] = None,
     mavlink_connections: Optional[List["DetectedMAVLink"]] = None,
-    command_allowlist: Optional[List[str]] = None,
-    command_denylist: Optional[List[str]] = None,
-    command_registry: Optional[CommandRegistry] = None,
     max_reconnect_attempts: Optional[int] = None,
     persistent_buffer: Optional[bool] = None,
 ):
@@ -663,9 +641,6 @@ def run_connector(
         camera_hub=camera_hub,
         can_adapters=can_adapters,
         mavlink_connections=mavlink_connections,
-        command_allowlist=command_allowlist,
-        command_denylist=command_denylist,
-        command_registry=command_registry,
         max_reconnect_attempts=max_reconnect_attempts,
         persistent_buffer=persistent_buffer,
     )
