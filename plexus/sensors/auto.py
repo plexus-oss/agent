@@ -104,6 +104,18 @@ def _init_known_sensors():
     ]
 
 
+def _discover_i2c_buses() -> List[int]:
+    """Find all available I2C bus numbers on the system."""
+    import glob as _glob
+    buses = []
+    for path in sorted(_glob.glob("/dev/i2c-*")):
+        try:
+            buses.append(int(path.split("-")[-1]))
+        except ValueError:
+            pass
+    return buses
+
+
 def scan_i2c(bus: int = 1) -> List[int]:
     """
     Scan I2C bus for connected devices.
@@ -126,9 +138,8 @@ def scan_i2c(bus: int = 1) -> List[int]:
         i2c = SMBus(bus)
     except PermissionError:
         raise  # Let CLI handle with user-friendly message
-    except OSError as e:
-        logger.debug("Could not open I2C bus %d: %s", bus, e)
-        return []
+    except OSError:
+        raise  # Let CLI handle with user-friendly message
 
     for addr in range(0x03, 0x78):  # Valid I2C address range
         try:
@@ -141,47 +152,56 @@ def scan_i2c(bus: int = 1) -> List[int]:
     return addresses
 
 
-def scan_sensors(bus: int = 1) -> List[DetectedSensor]:
+def scan_sensors(bus: Optional[int] = None) -> List[DetectedSensor]:
     """
-    Scan for known sensors on the I2C bus.
+    Scan for known sensors on I2C buses.
 
     Args:
-        bus: I2C bus number
+        bus: I2C bus number, or None to scan all available buses.
 
     Returns:
         List of detected sensors with their drivers
     """
     _init_known_sensors()
 
-    # First, scan for all I2C devices (ImportError/PermissionError propagate)
-    addresses = scan_i2c(bus)
+    buses = [bus] if bus is not None else _discover_i2c_buses()
 
     detected = []
 
-    for address in addresses:
-        # Try to match against known sensors
-        for driver, known_addr, _ in KNOWN_SENSORS:
-            if address == known_addr:
-                # Check if this sensor is already detected (avoid duplicates)
-                already_found = any(
-                    d.address == address and d.driver == driver
-                    for d in detected
-                )
-                if not already_found:
-                    # Try to verify the sensor
-                    try:
-                        sensor = driver(address=address, bus=bus)
-                        if sensor.is_available():
-                            detected.append(DetectedSensor(
-                                name=driver.name,
-                                address=address,
-                                bus=bus,
-                                driver=driver,
-                                description=driver.description,
-                            ))
-                            break  # Don't try other drivers for same address
-                    except Exception as e:
-                        logger.debug(f"Sensor probe failed at 0x{address:02X}: {e}")
+    for scan_bus in buses:
+        try:
+            addresses = scan_i2c(scan_bus)
+        except OSError:
+            logger.debug("Could not open I2C bus %d, skipping", scan_bus)
+            continue
+
+        if not addresses:
+            continue
+
+        logger.debug("I2C bus %d: found addresses %s", scan_bus,
+                      [f"0x{a:02X}" for a in addresses])
+
+        for address in addresses:
+            for driver, known_addr, _ in KNOWN_SENSORS:
+                if address == known_addr:
+                    already_found = any(
+                        d.address == address and d.bus == scan_bus and d.driver == driver
+                        for d in detected
+                    )
+                    if not already_found:
+                        try:
+                            sensor = driver(address=address, bus=scan_bus)
+                            if sensor.is_available():
+                                detected.append(DetectedSensor(
+                                    name=driver.name,
+                                    address=address,
+                                    bus=scan_bus,
+                                    driver=driver,
+                                    description=driver.description,
+                                ))
+                                break
+                        except Exception as e:
+                            logger.debug(f"Sensor probe failed at 0x{address:02X} on bus {scan_bus}: {e}")
 
     # Also scan SPI buses if spidev is available
     if _HAS_SPI:
@@ -202,7 +222,7 @@ def scan_sensors(bus: int = 1) -> List[DetectedSensor]:
 
 
 def auto_sensors(
-    bus: int = 1,
+    bus: Optional[int] = None,
     sample_rate: Optional[float] = None,
     prefix: str = "",
     detected: Optional[List[DetectedSensor]] = None,
@@ -211,7 +231,7 @@ def auto_sensors(
     Auto-detect sensors and create a SensorHub.
 
     Args:
-        bus: I2C bus number
+        bus: I2C bus number, or None to scan all available buses.
         sample_rate: Override sample rate for all sensors (None = use defaults)
         prefix: Prefix for all metric names
         detected: Pre-scanned sensors to use (skips re-scanning if provided)

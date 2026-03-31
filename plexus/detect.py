@@ -101,8 +101,11 @@ class SystemInfo:
 # Existing Detection Functions
 # ─────────────────────────────────────────────────────────────────────────────
 
-def detect_sensors(bus: int = 1) -> Tuple[Optional["SensorHub"], List]:
+def detect_sensors(bus: Optional[int] = None) -> Tuple[Optional["SensorHub"], List]:
     """Detect I2C sensors and create a SensorHub.
+
+    Args:
+        bus: I2C bus number, or None to scan all available buses.
 
     Returns:
         (sensor_hub or None, list of detected sensor info objects)
@@ -114,7 +117,7 @@ def detect_sensors(bus: int = 1) -> Tuple[Optional["SensorHub"], List]:
     from plexus.sensors import scan_sensors, auto_sensors
     sensors = scan_sensors(bus)
     if sensors:
-        hub = auto_sensors(bus=bus, detected=sensors)
+        hub = auto_sensors(detected=sensors)
         return hub, sensors
     return None, []
 
@@ -1134,7 +1137,7 @@ def _get_os_version() -> str:
 # Full Scan (aggregate all detectors)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def detect_all(bus: int = 1) -> Dict[str, Any]:
+def detect_all(bus: Optional[int] = None) -> Dict[str, Any]:
     """Run all detection functions and return a combined dictionary.
 
     This is used by `plexus scan --json` and for the comprehensive scan output.

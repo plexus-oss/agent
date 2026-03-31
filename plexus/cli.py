@@ -656,14 +656,18 @@ def start(key: Optional[str], device_id: Optional[str], scan: bool):
         info("Scanning hardware...")
         click.echo()
 
+        hw_detected = False
         try:
-            sensor_hub, sensors = detect_sensors(1)
+            sensor_hub, sensors = detect_sensors()
+            hw_detected = bool(sensors)
         except PermissionError:
             warning("I2C permission denied (run: sudo usermod -aG i2c $USER)")
         except ImportError:
-            logger.debug("smbus2 not installed, skipping I2C scan")
+            dim("I2C scanning unavailable (pip install smbus2)")
+        except OSError as e:
+            warning(f"I2C bus error: {e}")
         except Exception as e:
-            logger.debug("Sensor detection failed: %s", e)
+            warning(f"Sensor detection failed: {e}")
 
         # Fallback to system metrics if nothing found
         if not sensors:
@@ -672,9 +676,11 @@ def start(key: Optional[str], device_id: Optional[str], scan: bool):
             except Exception:
                 warning("Could not enable system metrics (pip install psutil)")
 
-        # Save to config
-        cfg["sensors"] = sensors_to_config(sensors)
-        save_config(cfg)
+        # Only save to config if we found real hardware sensors —
+        # don't persist fallback-only so next run re-scans
+        if hw_detected:
+            cfg["sensors"] = sensors_to_config(sensors)
+            save_config(cfg)
 
         # Print what was detected
         if sensors:
