@@ -7,7 +7,7 @@ for bus in [0, 1, 10, 20, 21, 22]:
             try:
                 s.read_byte(a)
                 addrs.append(f'0x{a:02X}')
-            except:
+            except OSError:
                 pass
         s.close()
         if addrs:
