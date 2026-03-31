@@ -143,7 +143,7 @@ def scan_i2c(bus: int = 1) -> List[int]:
 
     for addr in range(0x03, 0x78):  # Valid I2C address range
         try:
-            i2c.read_byte(addr)
+            i2c.write_quick(addr)
             addresses.append(addr)
         except OSError:
             pass  # No device at this address
