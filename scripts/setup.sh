@@ -146,11 +146,25 @@ fi
 # Activate venv and install
 VENV_PIP="$VENV_DIR/bin/pip"
 
-# Install with sensor support by default on Linux (likely Raspberry Pi)
+# Install with hardware support by default on Linux (likely Raspberry Pi)
 if [ "$OS" = "Linux" ]; then
     "$VENV_PIP" install --upgrade pip --quiet
-    "$VENV_PIP" install --upgrade plexus-agent[sensors] --quiet 2>/dev/null || \
-    "$VENV_PIP" install --upgrade plexus-agent --quiet
+
+    # Detect Pi camera support
+    IS_PI=false
+    if [ -f /proc/device-tree/model ] && grep -qi "raspberry" /proc/device-tree/model 2>/dev/null; then
+        IS_PI=true
+    fi
+
+    if [ "$IS_PI" = true ]; then
+        # Pi gets sensors + camera by default
+        "$VENV_PIP" install --upgrade "plexus-agent[sensors,picamera]" --quiet 2>/dev/null || \
+        "$VENV_PIP" install --upgrade "plexus-agent[sensors]" --quiet 2>/dev/null || \
+        "$VENV_PIP" install --upgrade plexus-agent --quiet
+    else
+        "$VENV_PIP" install --upgrade "plexus-agent[sensors]" --quiet 2>/dev/null || \
+        "$VENV_PIP" install --upgrade plexus-agent --quiet
+    fi
 else
     # macOS/other - use system pip or venv
     if [ -f "$VENV_PIP" ]; then
@@ -197,19 +211,40 @@ echo "────────────────────────�
 echo ""
 
 if [ "$OS" = "Linux" ]; then
-    echo "  Setting up I2C support..."
+    echo "  Setting up hardware support..."
     echo ""
 
-    # Install i2c-tools for hardware verification
-    if ! command -v i2cdetect &> /dev/null; then
-        echo "  Installing i2c-tools..."
+    # Install system packages for I2C and camera support
+    PKGS_TO_INSTALL=""
+    command -v i2cdetect &> /dev/null || PKGS_TO_INSTALL="i2c-tools"
+
+    # libcap-dev is needed by picamera2's python-prctl dependency
+    if ! dpkg -s libcap-dev &> /dev/null 2>&1; then
+        PKGS_TO_INSTALL="$PKGS_TO_INSTALL libcap-dev"
+    fi
+
+    if [ -n "$PKGS_TO_INSTALL" ]; then
+        echo "  Installing system packages: $PKGS_TO_INSTALL"
         if [ "$EUID" -eq 0 ]; then
-            apt-get install -y -qq i2c-tools
+            apt-get install -y -qq $PKGS_TO_INSTALL
         elif sudo -n true 2>/dev/null; then
-            sudo apt-get install -y -qq i2c-tools
+            sudo apt-get install -y -qq $PKGS_TO_INSTALL
         else
-            echo -e "  ${YELLOW}Could not install i2c-tools automatically.${NC}"
-            echo "  Run manually: sudo apt install i2c-tools"
+            echo -e "  ${YELLOW}Could not install system packages automatically.${NC}"
+            echo "  Run manually: sudo apt install $PKGS_TO_INSTALL"
+        fi
+    fi
+
+    # Add user to i2c group for sensor access without sudo
+    if getent group i2c &> /dev/null && ! id -nG | grep -qw i2c; then
+        if [ "$EUID" -eq 0 ]; then
+            usermod -aG i2c "$USER"
+            echo -e "  ${GREEN}✓ Added $USER to i2c group${NC}"
+        elif sudo -n true 2>/dev/null; then
+            sudo usermod -aG i2c "$USER"
+            echo -e "  ${GREEN}✓ Added $USER to i2c group${NC}"
+        else
+            echo -e "  ${YELLOW}Add yourself to the i2c group: sudo usermod -aG i2c \$USER${NC}"
         fi
     fi
 
