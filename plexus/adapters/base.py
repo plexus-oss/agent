@@ -103,6 +103,7 @@ class Metric:
         timestamp: Unix timestamp (seconds). If None, current time is used.
         tags: Optional key-value metadata
         source_id: Optional source identifier
+        data_class: Pipeline data class - "metric" (default), "event", or "blob"
 
     Examples:
         Metric("temperature", 72.5)
@@ -115,6 +116,7 @@ class Metric:
     timestamp: Optional[float] = None
     tags: Optional[Dict[str, str]] = None
     source_id: Optional[str] = None
+    data_class: str = "metric"
 
     def __post_init__(self):
         if self.timestamp is None:
@@ -123,6 +125,7 @@ class Metric:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API submission"""
         result = {
+            "class": self.data_class,
             "metric": self.name,
             "value": self.value,
             "timestamp": self.timestamp,

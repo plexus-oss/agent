@@ -9,6 +9,7 @@ Machine-readable interface for AI assistants and automation scripts.
 | `PLEXUS_API_KEY`  | API key for authentication                         | `plx_xxxxx`                   |
 | `PLEXUS_ENDPOINT` | Server URL (default: `https://app.plexus.company`) | `https://custom.endpoint.com` |
 | `PLEXUS_ORG_ID`   | Organization ID                                    | `org_xxxxx`                   |
+| `PLEXUS_WS_URL`   | Gateway WebSocket URL (overrides API discovery)    | `ws://localhost:8080`         |
 
 ## CLI Commands
 

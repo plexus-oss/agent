@@ -15,6 +15,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 from io import BytesIO
 from typing import Optional, Callable, List, Dict, Any, TYPE_CHECKING
 
@@ -63,11 +64,13 @@ def _upload_frame_async(endpoint: str, api_key: str, frame, source_id: str, run_
 class StreamManager:
     """Manages sensor and camera streams.
 
+    All telemetry is relayed over WebSocket. Persistence is a gateway/
+    consumer concern — the agent has no per-stream "record" state.
+
     Args:
         sensor_hub: SensorHub instance for reading sensors.
         camera_hub: CameraHub instance for capturing frames.
         on_status: Callback for status messages.
-        persist_fn: Async function to persist data points (called when recording).
         buffer: Optional buffer backend for store-and-forward. When provided,
                 telemetry that fails to send over WebSocket is buffered locally
                 instead of being lost.
@@ -80,7 +83,6 @@ class StreamManager:
         can_adapters: Optional[List["DetectedCAN"]] = None,
         mavlink_connections: Optional[List["DetectedMAVLink"]] = None,
         on_status: Optional[Callable[[str], None]] = None,
-        persist_fn: Optional[Callable[[List[Dict[str, Any]]], Any]] = None,
         error_report_fn: Optional[Callable] = None,
         buffer: Optional["BufferBackend"] = None,
         store_frames: bool = False,
@@ -95,7 +97,6 @@ class StreamManager:
         self.can_adapters = can_adapters or []
         self.mavlink_connections = mavlink_connections or []
         self.on_status = on_status or (lambda x: None)
-        self.persist_fn = persist_fn
         self.error_report_fn = error_report_fn
         self.buffer = buffer
         self.store_frames = store_frames
@@ -111,7 +112,6 @@ class StreamManager:
         self._can_instances: Dict[str, Any] = {}  # channel -> CANAdapter
         self._active_mavlink_streams: Dict[str, asyncio.Task] = {}
         self._mavlink_instances: Dict[str, Any] = {}  # conn_string -> MAVLinkAdapter
-        self._recording: bool = False
 
     # =========================================================================
     # WebSocket Send with Buffer Fallback
@@ -120,10 +120,21 @@ class StreamManager:
     async def _send_or_buffer(self, ws, points: List[Dict[str, Any]]) -> bool:
         """Send telemetry over WebSocket, falling back to buffer on failure.
 
+        Wraps points in the pipeline envelope with version, trace_id, and
+        source identifiers for gateway routing.
+
         Returns True if sent over WebSocket, False if buffered.
         """
         try:
-            await ws.send(json.dumps({"type": "telemetry", "points": points}))
+            envelope = {
+                "type": "telemetry",
+                "v": 1,
+                "trace_id": uuid.uuid4().hex,
+                "source_id": self._source_id,
+                "points": points,
+                "ingested_at": int(time.time() * 1000),
+            }
+            await ws.send(json.dumps(envelope))
             return True
         except (ConnectionClosed, ConnectionError, OSError):
             if self.buffer and points:
@@ -138,25 +149,50 @@ class StreamManager:
     async def start_stream(self, data: dict, ws):
         """Start streaming sensor data.
 
+        Each sensor is sampled at its own declared `sample_rate` (Hz).
+        The loop ticks at the fastest sensor's rate and reads each
+        sensor only when its interval is up. Sensors with different
+        rates coexist correctly — a 100Hz IMU and a 1Hz BME280 in the
+        same hub each run at their natural cadence.
+
         Args (from dashboard):
-            store: bool - If True, persist to ClickHouse. If False, real-time only.
             metrics: list - Which metrics to stream (empty = all)
-            interval_ms: int - Sampling interval
+            interval_ms: int - Optional global rate cap in ms. When set,
+                no sensor samples faster than 1000/interval_ms Hz. When
+                omitted, sensors use their declared rates.
         """
         stream_id = data.get("id", f"stream_{int(time.time())}")
         metrics = data.get("metrics", [])
-        interval_ms = data.get("interval_ms", 100)
-        store = data.get("store", False)
-
-        self._recording = store
+        interval_ms = data.get("interval_ms")  # optional global cap
 
         if not self.sensor_hub:
             self.on_status("No sensors configured")
             return
 
-        mode = "Recording" if store else "Streaming"
+        sensors = list(self.sensor_hub.sensors)
+        if not sensors:
+            self.on_status("No sensors available")
+            return
+
+        # Apply optional global rate cap from the dashboard.
+        # Each sensor samples at min(sensor.sample_rate, cap_hz).
+        cap_hz = None
+        if interval_ms and interval_ms > 0:
+            cap_hz = 1000.0 / interval_ms
+
+        def effective_rate(s) -> float:
+            rate = getattr(s, "sample_rate", 10.0) or 10.0
+            if cap_hz is not None:
+                rate = min(rate, cap_hz)
+            return max(rate, 0.01)  # floor at 0.01Hz (one read per 100s)
+
+        # Loop tick = fastest sensor's interval
+        max_rate = max(effective_rate(s) for s in sensors)
+        tick = 1.0 / max_rate
+
         metric_count = len(metrics) if metrics else "all"
-        self.on_status(f"{mode} {metric_count} metrics @ {interval_ms}ms")
+        cap_note = f" cap={cap_hz:.1f}Hz" if cap_hz is not None else ""
+        self.on_status(f"Streaming {metric_count} metrics (tick {tick*1000:.0f}ms{cap_note})")
 
         async def stream_loop():
             # Parse metric filters (strip source_id prefix if present)
@@ -164,25 +200,42 @@ class StreamManager:
             for m in metrics:
                 filters.add(m.split(":", 1)[-1] if ":" in m else m)
 
+            # Per-sensor last-read timestamps
+            last_read = {id(s): 0.0 for s in sensors}
+
             try:
                 while stream_id in self._active_streams:
-                    readings = self.sensor_hub.read_all()
+                    now = time.time()
+                    readings = []
+
+                    for sensor in sensors:
+                        if getattr(sensor, "_disabled", False):
+                            continue
+                        interval = 1.0 / effective_rate(sensor)
+                        if now - last_read[id(sensor)] >= interval:
+                            try:
+                                readings.extend(sensor.read())
+                            except Exception as e:
+                                logger.debug(f"Sensor read failed: {sensor.name}: {e}")
+                                continue
+                            last_read[id(sensor)] = now
+
                     if filters:
                         readings = [r for r in readings if r.metric in filters]
 
-                    points = [
-                        {"metric": r.metric, "value": r.value, "timestamp": int(time.time() * 1000)}
-                        for r in readings
-                    ]
+                    if readings:
+                        points = [
+                            {
+                                "class": "metric",
+                                "metric": r.metric,
+                                "value": r.value,
+                                "timestamp": int(time.time() * 1000),
+                            }
+                            for r in readings
+                        ]
+                        await self._send_or_buffer(ws, points)
 
-                    # Send to WebSocket (real-time), buffer on failure
-                    await self._send_or_buffer(ws, points)
-
-                    # If recording, also persist via HTTP
-                    if self._recording and points and self.persist_fn:
-                        asyncio.create_task(self.persist_fn(points))
-
-                    await asyncio.sleep(interval_ms / 1000)
+                    await asyncio.sleep(tick)
             except asyncio.CancelledError:
                 pass
             except Exception as e:
@@ -207,8 +260,6 @@ class StreamManager:
             self._active_streams[stream_id].cancel()
             del self._active_streams[stream_id]
             self.on_status("Stopped stream")
-
-        self._recording = False
 
     async def configure_sensor(self, data: dict):
         """Configure a sensor's runtime parameters.
@@ -289,6 +340,9 @@ class StreamManager:
                     if frame:
                         await ws.send(json.dumps({
                             "type": "video_frame",
+                            "v": 1,
+                            "trace_id": uuid.uuid4().hex,
+                            "source_id": self._source_id,
                             "camera_id": camera_id,
                             "frame": base64.b64encode(frame.data).decode('ascii'),
                             "width": frame.width,
@@ -399,10 +453,6 @@ class StreamManager:
 
         dbc_path = data.get("dbc_path")
         interval_ms = data.get("interval_ms", 10)
-        store = data.get("store", False)
-
-        if store:
-            self._recording = True
 
         try:
             from plexus.adapters.can import CANAdapter
@@ -434,6 +484,7 @@ class StreamManager:
                     if metrics:
                         points = [
                             {
+                                "class": m.data_class,
                                 "metric": m.name,
                                 "value": m.value,
                                 "timestamp": int((m.timestamp or time.time()) * 1000),
@@ -442,9 +493,6 @@ class StreamManager:
                             for m in metrics
                         ]
                         await self._send_or_buffer(ws, points)
-
-                        if self._recording and self.persist_fn:
-                            asyncio.create_task(self.persist_fn(points))
 
                     await asyncio.sleep(interval_ms / 1000)
             except asyncio.CancelledError:
@@ -516,11 +564,7 @@ class StreamManager:
             self._cleanup_mavlink_instance(conn_str)
 
         interval_ms = data.get("interval_ms", 10)
-        store = data.get("store", False)
         include_messages = data.get("include_messages")
-
-        if store:
-            self._recording = True
 
         try:
             from plexus.adapters.mavlink import MAVLinkAdapter
@@ -549,6 +593,7 @@ class StreamManager:
                     if metrics:
                         points = [
                             {
+                                "class": m.data_class,
                                 "metric": m.name,
                                 "value": m.value,
                                 "timestamp": int((m.timestamp or time.time()) * 1000),
@@ -557,9 +602,6 @@ class StreamManager:
                             for m in metrics
                         ]
                         await self._send_or_buffer(ws, points)
-
-                        if self._recording and self.persist_fn:
-                            asyncio.create_task(self.persist_fn(points))
 
                     await asyncio.sleep(interval_ms / 1000)
             except asyncio.CancelledError:
@@ -608,8 +650,6 @@ class StreamManager:
 
     def cancel_all(self):
         """Cancel all active streams."""
-        self._recording = False
-
         for task in self._active_streams.values():
             task.cancel()
         self._active_streams.clear()

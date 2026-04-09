@@ -162,6 +162,7 @@ class Plexus:
         value: FlexValue,
         timestamp: Optional[float] = None,
         tags: Optional[Dict[str, str]] = None,
+        data_class: str = "metric",
     ) -> Dict[str, Any]:
         """Create a data point dictionary.
 
@@ -173,6 +174,7 @@ class Plexus:
             - list: Arrays, coordinates, multi-value readings
         """
         point = {
+            "class": data_class,
             "metric": metric,
             "value": value,
             "timestamp": self._normalize_ts_ms(timestamp),
@@ -189,6 +191,7 @@ class Plexus:
         value: FlexValue,
         timestamp: Optional[float] = None,
         tags: Optional[Dict[str, str]] = None,
+        data_class: str = "metric",
     ) -> bool:
         """
         Send a single metric value to Plexus.
@@ -203,6 +206,7 @@ class Plexus:
                    - list: px.send("angles", [0.5, 1.2, -0.3])
             timestamp: Unix timestamp. If not provided, uses current time.
             tags: Optional key-value tags for the metric
+            data_class: Pipeline data class - "metric" (default) or "event"
 
         Returns:
             True if successful
@@ -214,10 +218,9 @@ class Plexus:
         Example:
             px.send("temperature", 72.5)
             px.send("motor.rpm", 3450, tags={"motor_id": "A1"})
-            px.send("robot.state", "IDLE")
-            px.send("position", {"x": 1.5, "y": 2.3, "z": 0.0})
+            px.send("gps.status", {"fix": "lost"}, data_class="event")
         """
-        point = self._make_point(metric, value, timestamp, tags)
+        point = self._make_point(metric, value, timestamp, tags, data_class)
         return self._send_points([point])
 
     def send_batch(

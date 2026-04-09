@@ -125,7 +125,6 @@ class PlexusConnector:
             can_adapters=can_adapters,
             mavlink_connections=mavlink_connections,
             on_status=self.on_status,
-            persist_fn=self._persist_async,
             error_report_fn=self.report_error,
             buffer=self._buffer,
             endpoint=self.endpoint,
@@ -215,14 +214,14 @@ class PlexusConnector:
     # =========================================================================
 
     def _get_ws_url(self) -> str:
-        """Get PartyKit WebSocket URL."""
+        """Get WebSocket URL for gateway or PartyKit."""
         # 1. Explicit env var
         ws_endpoint = os.environ.get("PLEXUS_WS_URL")
         if ws_endpoint:
             base = ws_endpoint.rstrip("/")
-            if "/party/" in base:
+            if "/ws/" in base or "/party/" in base:
                 return base
-            return f"{base}/party/{self.org_id}"
+            return f"{base}/ws/device"
 
         # 2. Discover from API
         try:
