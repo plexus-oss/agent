@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint with ruff
+        run: ruff check .
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest -v
+
+  version-check:
+    name: Version sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check version consistency
+        run: |
+          PYPROJECT_VERSION=$(python -c "
+          import re
+          with open('pyproject.toml') as f:
+              match = re.search(r'^version\s*=\s*\"(.+?)\"', f.read(), re.MULTILINE)
+              print(match.group(1))
+          ")
+          INIT_VERSION=$(python -c "
+          import re
+          with open('plexus/__init__.py') as f:
+              match = re.search(r'^__version__\s*=\s*\"(.+?)\"', f.read(), re.MULTILINE)
+              print(match.group(1))
+          ")
+          echo "pyproject.toml version: $PYPROJECT_VERSION"
+          echo "__init__.py version:    $INIT_VERSION"
+          if [ "$PYPROJECT_VERSION" != "$INIT_VERSION" ]; then
+            echo "::error::Version mismatch! pyproject.toml=$PYPROJECT_VERSION, __init__.py=$INIT_VERSION"
+            exit 1
+          fi
+          echo "Versions match: $PYPROJECT_VERSION"

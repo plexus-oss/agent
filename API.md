@@ -1,0 +1,508 @@
+# Plexus API
+
+Send telemetry data to Plexus using HTTP or WebSocket.
+
+## Architecture
+
+**Two ways to send data:**
+
+| Method    | Use Case                                        |
+| --------- | ----------------------------------------------- |
+| HTTP POST | Simple scripts, batch uploads, embedded devices |
+| WebSocket | Real-time streaming, UI-controlled devices      |
+
+## Quick Start
+
+### Option 1: Web-Controlled Device (Recommended)
+
+Set up your device with one command using an API key:
+
+```bash
+# With API key (fleet provisioning — get from Settings → Developer)
+curl -sL https://app.plexus.company/setup | bash -s -- --key plx_your_api_key
+
+```
+
+Then control streaming, recording, and configuration from [app.plexus.company/devices](https://app.plexus.company/devices).
+
+### Option 2: Direct HTTP
+
+Send data directly via HTTP:
+
+```bash
+curl -X POST https://app.plexus.company/api/ingest \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "points": [{
+      "metric": "temperature",
+      "value": 72.5,
+      "timestamp": 1699900000,
+      "source_id": "sensor-001"
+    }]
+  }'
+```
+
+## Authentication
+
+Plexus uses API keys for all authentication:
+
+| Type    | Prefix | Use Case                                     |
+| ------- | ------ | -------------------------------------------- |
+| API Key | `plx_` | HTTP access and WebSocket device connections |
+
+### Getting an API Key
+
+**Option A: CLI setup (recommended for devices)**
+
+1. Run `plexus start` on your device
+2. Sign up or sign in directly in the terminal
+3. API key is saved to `~/.plexus/config.json`
+
+**Option B: Manual creation**
+
+1. Sign up at [app.plexus.company](https://app.plexus.company)
+2. Go to Settings → Developer
+3. Create an API key (starts with `plx_`)
+
+## HTTP API
+
+### Authentication
+
+All requests require an API key in the header:
+
+```
+x-api-key: plx_xxxxx
+```
+
+### Send Data
+
+**POST** `/api/ingest`
+
+```json
+{
+  "points": [
+    {
+      "metric": "temperature",
+      "value": 72.5,
+      "timestamp": 1699900000.123,
+      "source_id": "sensor-001",
+      "tags": { "location": "lab" },
+      "session_id": "test-001"
+    }
+  ]
+}
+```
+
+| Field        | Type   | Required | Description                                    |
+| ------------ | ------ | -------- | ---------------------------------------------- |
+| `metric`     | string | Yes      | Metric name (e.g., `temperature`, `motor.rpm`) |
+| `value`      | any    | Yes      | See supported value types below                |
+| `timestamp`  | float  | No       | Unix timestamp (seconds). Defaults to now      |
+| `source_id`  | string | Yes      | Your source identifier                         |
+| `tags`       | object | No       | Key-value labels                               |
+| `session_id` | string | No       | Group data into sessions                       |
+
+### Supported Value Types
+
+| Type    | Example                          | Use Case                         |
+| ------- | -------------------------------- | -------------------------------- |
+| number  | `72.5`, `-40`, `3.14159`         | Numeric readings (most common)   |
+| string  | `"error"`, `"idle"`, `"running"` | Status, state, labels            |
+| boolean | `true`, `false`                  | On/off, enabled/disabled         |
+| object  | `{"x": 1.2, "y": 3.4, "z": 5.6}` | Vector data, structured readings |
+| array   | `[1.0, 2.0, 3.0, 4.0]`           | Waveforms, multiple values       |
+
+### Sessions
+
+Group related data for analysis and playback.
+
+**Create session:**
+
+```json
+POST /api/sessions
+{
+  "session_id": "test-001",
+  "name": "Motor Test Run",
+  "source_id": "sensor-001",
+  "status": "active"
+}
+```
+
+**End session:**
+
+```json
+PATCH /api/sessions/{session_id}
+{
+  "status": "completed",
+  "ended_at": "2024-01-15T10:30:00Z"
+}
+```
+
+## WebSocket API
+
+For real-time UI-controlled streaming, devices connect via WebSocket.
+
+### Connection Flow
+
+1. Device connects to PartyKit server
+2. Device authenticates with API key
+3. Device reports available sensors
+4. Dashboard controls streaming via messages
+
+### Device Authentication
+
+Devices authenticate using an API key:
+
+```json
+// Device → Server
+{
+  "type": "device_auth",
+  "api_key": "plx_xxxxx",
+  "source_id": "my-device-001",
+  "platform": "Linux",
+  "sensors": [
+    {
+      "name": "MPU6050",
+      "description": "6-axis IMU",
+      "metrics": ["accel_x", "accel_y", "accel_z", "gyro_x", "gyro_y", "gyro_z"],
+      "sample_rate": 100,
+      "prefix": "",
+      "available": true
+    }
+  ]
+}
+
+// Server → Device
+{
+  "type": "authenticated",
+  "source_id": "my-device-001"
+}
+```
+
+### Message Types (Dashboard → Device)
+
+| Type            | Description                          |
+| --------------- | ------------------------------------ |
+| `start_stream`  | Start streaming sensor data          |
+| `stop_stream`   | Stop streaming                       |
+| `start_session` | Start recording to a session         |
+| `stop_session`  | Stop recording                       |
+| `configure`     | Configure sensor (e.g., sample rate) |
+| `ping`          | Keepalive request                    |
+
+### Message Types (Device → Dashboard)
+
+| Type              | Description             |
+| ----------------- | ----------------------- |
+| `telemetry`       | Sensor data points      |
+| `session_started` | Confirm session started |
+| `session_stopped` | Confirm session stopped |
+| `pong`            | Keepalive response      |
+
+### Start Streaming
+
+```json
+// Dashboard → Device
+{
+  "type": "start_stream",
+  "source_id": "my-device-001",
+  "metrics": ["accel_x", "accel_y", "accel_z"],
+  "interval_ms": 100
+}
+
+// Device → Dashboard (continuous)
+{
+  "type": "telemetry",
+  "points": [
+    { "metric": "accel_x", "value": 0.12, "timestamp": 1699900000123 },
+    { "metric": "accel_y", "value": 0.05, "timestamp": 1699900000123 },
+    { "metric": "accel_z", "value": 9.81, "timestamp": 1699900000123 }
+  ]
+}
+```
+
+### Start Session (Recording)
+
+```json
+// Dashboard → Device
+{
+  "type": "start_session",
+  "source_id": "my-device-001",
+  "session_id": "session_1699900000_abc123",
+  "session_name": "Motor Test",
+  "metrics": [],
+  "interval_ms": 100
+}
+
+// Device → Dashboard
+{
+  "type": "session_started",
+  "session_id": "session_1699900000_abc123",
+  "session_name": "Motor Test"
+}
+
+// Device streams telemetry with session_id tag
+{
+  "type": "telemetry",
+  "session_id": "session_1699900000_abc123",
+  "points": [
+    {
+      "metric": "accel_x",
+      "value": 0.12,
+      "timestamp": 1699900000123,
+      "tags": { "session_id": "session_1699900000_abc123" }
+    }
+  ]
+}
+```
+
+### Configure Sensor
+
+```json
+// Dashboard → Device
+{
+  "type": "configure",
+  "source_id": "my-device-001",
+  "sensor": "MPU6050",
+  "config": {
+    "sample_rate": 50
+  }
+}
+```
+
+## Code Examples
+
+### Python (Direct HTTP)
+
+```python
+import requests
+import time
+
+requests.post(
+    "https://app.plexus.company/api/ingest",
+    headers={"x-api-key": "plx_xxxxx"},
+    json={
+        "points": [{
+            "metric": "temperature",
+            "value": 72.5,
+            "timestamp": time.time(),
+            "source_id": "sensor-001"
+        }]
+    }
+)
+```
+
+### JavaScript
+
+```javascript
+await fetch("https://app.plexus.company/api/ingest", {
+  method: "POST",
+  headers: {
+    "x-api-key": "plx_xxxxx",
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    points: [
+      {
+        metric: "temperature",
+        value: 72.5,
+        timestamp: Date.now() / 1000,
+        source_id: "sensor-001",
+      },
+    ],
+  }),
+});
+```
+
+### Go
+
+```go
+package main
+
+import (
+    "bytes"
+    "encoding/json"
+    "net/http"
+    "time"
+)
+
+func main() {
+    points := map[string]interface{}{
+        "points": []map[string]interface{}{{
+            "metric":    "temperature",
+            "value":     72.5,
+            "timestamp": float64(time.Now().Unix()),
+            "source_id": "sensor-001",
+        }},
+    }
+
+    body, _ := json.Marshal(points)
+    req, _ := http.NewRequest("POST", "https://app.plexus.company/api/ingest", bytes.NewBuffer(body))
+    req.Header.Set("x-api-key", "plx_xxxxx")
+    req.Header.Set("Content-Type", "application/json")
+
+    http.DefaultClient.Do(req)
+}
+```
+
+### Arduino / ESP32
+
+```cpp
+#include <WiFi.h>
+#include <HTTPClient.h>
+
+void sendToPlexus(const char* metric, float value) {
+    HTTPClient http;
+    http.begin("https://app.plexus.company/api/ingest");
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("x-api-key", "plx_xxxxx");
+
+    String payload = "{\"points\":[{";
+    payload += "\"metric\":\"" + String(metric) + "\",";
+    payload += "\"value\":" + String(value) + ",";
+    payload += "\"timestamp\":" + String(millis() / 1000.0) + ",";
+    payload += "\"source_id\":\"esp32-001\"";
+    payload += "}]}";
+
+    http.POST(payload);
+    http.end();
+}
+```
+
+### Bash
+
+```bash
+#!/bin/bash
+API_KEY="plx_xxxxx"
+SOURCE_ID="sensor-001"
+
+curl -X POST https://app.plexus.company/api/ingest \
+  -H "x-api-key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"points\": [{
+      \"metric\": \"temperature\",
+      \"value\": 72.5,
+      \"timestamp\": $(date +%s),
+      \"source_id\": \"$SOURCE_ID\"
+    }]
+  }"
+```
+
+## Protocol Adapters
+
+Plexus supports protocol adapters for ingesting data from various sources.
+
+### CAN Bus Adapter
+
+Read CAN bus data with optional DBC signal decoding:
+
+```bash
+pip install plexus-python[can]
+```
+
+```python
+from plexus.adapters import CANAdapter
+from plexus import Plexus
+
+plexus = Plexus(api_key="plx_xxx", source_id="vehicle-001")
+adapter = CANAdapter(
+    interface="socketcan",
+    channel="can0",
+    dbc_path="vehicle.dbc",  # Optional: decode signals
+)
+
+with adapter:
+    while True:
+        for metric in adapter.poll():
+            # Raw: can.raw.0x123 = "DEADBEEF"
+            # Decoded: engine_rpm = 2500
+            plexus.send(metric.name, metric.value, tags=metric.tags)
+```
+
+**Setup virtual CAN for testing (Linux):**
+
+```bash
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+
+# Send test frames
+cansend vcan0 123#DEADBEEF
+```
+
+**Supported interfaces:** socketcan, pcan, vector, kvaser, slcan, virtual
+
+### MQTT Adapter
+
+Bridge MQTT brokers to Plexus:
+
+```bash
+pip install plexus-python[mqtt]
+```
+
+```python
+from plexus.adapters import MQTTAdapter
+
+adapter = MQTTAdapter(
+    broker="localhost",
+    topic="sensors/#",
+    port=1883,
+)
+adapter.connect()
+adapter.run(on_data=my_callback)
+```
+
+## Python SDK with Sensor Drivers
+
+For Raspberry Pi and other Linux devices, the Python SDK includes sensor drivers:
+
+```bash
+pip install plexus-python[sensors]
+plexus start
+```
+
+### Supported Sensors
+
+| Sensor  | Type        | Metrics                                                       | I2C Address |
+| ------- | ----------- | ------------------------------------------------------------- | ----------- |
+| MPU6050 | 6-axis IMU  | `accel_x`, `accel_y`, `accel_z`, `gyro_x`, `gyro_y`, `gyro_z` | 0x68, 0x69  |
+| MPU9250 | 9-axis IMU  | `accel_x`, `accel_y`, `accel_z`, `gyro_x`, `gyro_y`, `gyro_z` | 0x68        |
+| BME280  | Environment | `temperature`, `humidity`, `pressure`                         | 0x76, 0x77  |
+
+### Custom Sensors
+
+```python
+from plexus.sensors import BaseSensor, SensorReading
+
+class MySensor(BaseSensor):
+    name = "MySensor"
+    metrics = ["voltage", "current"]
+
+    def read(self):
+        return [
+            SensorReading("voltage", read_adc(0) * 3.3),
+            SensorReading("current", read_adc(1) * 0.1),
+        ]
+```
+
+## Errors
+
+| Status | Meaning                         |
+| ------ | ------------------------------- |
+| 200    | Success                         |
+| 400    | Bad request (check JSON format) |
+| 401    | Invalid or missing API key      |
+| 403    | API key lacks permissions       |
+| 404    | Resource not found              |
+| 410    | Resource expired                |
+
+## Best Practices
+
+- **Batch points** - Send up to 100 points per request for HTTP
+- **Use timestamps** - Always include accurate timestamps
+- **Consistent source_id** - Use the same ID for each physical device/source
+- **Use tags** - Label data for filtering (e.g., `{"location": "lab"}`)
+- **Use sessions** - Group related data for easier analysis
+- **Prefer WebSocket** - For real-time UI-controlled devices, use `plexus start`

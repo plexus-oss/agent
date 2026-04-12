@@ -1,0 +1,57 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Use Case
+      description: What problem does this feature solve? What are you trying to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How should this work? Include example code if applicable.
+      render: python
+
+  - type: checkboxes
+    id: adapters
+    attributes:
+      label: Related Adapters
+      description: Which adapters or protocols does this relate to?
+      options:
+        - label: Core SDK / Client
+        - label: Sensors (I2C/smbus)
+        - label: CAN bus
+        - label: MAVLink
+        - label: MQTT
+        - label: Serial
+        - label: BLE
+        - label: Camera / Video
+        - label: OPC-UA
+        - label: Modbus
+        - label: ROS bags
+        - label: New adapter
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this to your project?
+      options:
+        - Nice to have
+        - Important — working around it today
+        - Critical — blocking my project
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I'm willing to submit a PR for this feature

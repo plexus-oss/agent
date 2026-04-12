@@ -1,0 +1,290 @@
+"""
+Auto-detection of connected sensors.
+
+Scans I2C buses to find known sensors and automatically creates driver instances.
+
+Usage:
+    from plexus.sensors import scan_sensors, auto_sensors
+
+    # Scan and list available sensors
+    sensors = scan_sensors()
+    for s in sensors:
+        print(f"{s.name} at 0x{s.address:02X}")
+
+    # Auto-create sensor instances
+    hub = auto_sensors()
+    hub.run(Plexus())
+"""
+
+import logging
+from typing import List, Dict, Type, Optional, Tuple
+from dataclasses import dataclass
+
+from .base import BaseSensor, SensorHub
+
+try:
+    from .spi_scan import scan_spi
+    _HAS_SPI = True
+except ImportError:
+    _HAS_SPI = False
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DetectedSensor:
+    """Information about a detected sensor."""
+    name: str
+    address: int
+    bus: int
+    driver: Type[BaseSensor]
+    description: str
+
+
+# Registry of known sensors and their I2C addresses
+KNOWN_SENSORS: List[Tuple[Type[BaseSensor], int, str]] = []
+
+
+def register_sensor(driver: Type[BaseSensor], address: int, chip_id_check=None):
+    """Register a sensor for auto-detection."""
+    KNOWN_SENSORS.append((driver, address, chip_id_check))
+
+
+def _init_known_sensors():
+    """Initialize the registry with known sensors."""
+    global KNOWN_SENSORS
+
+    if KNOWN_SENSORS:
+        return  # Already initialized
+
+    # Import drivers
+    from .mpu6050 import MPU6050, MPU9250
+    from .bme280 import BME280
+    from .ina219 import INA219
+    from .sht3x import SHT3x
+    from .bh1750 import BH1750
+    from .vl53l0x import VL53L0X
+    from .ads1115 import ADS1115
+    from .magnetometer import QMC5883L, HMC5883L
+    from .adxl345 import ADXL345
+
+    # Register known sensors: (driver_class, i2c_address, chip_id_check)
+    KNOWN_SENSORS = [
+        # IMU sensors
+        (MPU6050, 0x68, None),
+        (MPU6050, 0x69, None),
+        (MPU9250, 0x68, None),  # Same address as MPU6050
+        # Environmental sensors
+        (BME280, 0x76, None),
+        (BME280, 0x77, None),
+        # Current/power monitoring
+        (INA219, 0x40, None),
+        (INA219, 0x41, None),
+        (INA219, 0x44, None),
+        (INA219, 0x45, None),
+        # Precision temperature/humidity
+        (SHT3x, 0x44, None),
+        (SHT3x, 0x45, None),
+        # Ambient light
+        (BH1750, 0x23, None),
+        (BH1750, 0x5C, None),
+        # Time-of-flight distance
+        (VL53L0X, 0x29, None),
+        # ADC
+        (ADS1115, 0x48, None),
+        (ADS1115, 0x49, None),
+        (ADS1115, 0x4A, None),
+        (ADS1115, 0x4B, None),
+        # Magnetometers
+        (QMC5883L, 0x0D, None),
+        (HMC5883L, 0x1E, None),
+        # Accelerometer (I2C mode)
+        (ADXL345, 0x53, None),
+        (ADXL345, 0x1D, None),
+    ]
+
+
+def _discover_i2c_buses() -> List[int]:
+    """Find all available I2C bus numbers on the system."""
+    import glob as _glob
+    buses = []
+    for path in sorted(_glob.glob("/dev/i2c-*")):
+        try:
+            buses.append(int(path.split("-")[-1]))
+        except ValueError:
+            pass
+    return buses
+
+
+def scan_i2c(bus: int = 1) -> List[int]:
+    """
+    Scan I2C bus for connected devices.
+
+    Args:
+        bus: I2C bus number (usually 1 on Raspberry Pi)
+
+    Returns:
+        List of detected I2C addresses
+    """
+    try:
+        from smbus2 import SMBus
+    except ImportError:
+        raise ImportError(
+            "smbus2 is required for I2C scanning. Install with: pip install smbus2"
+        )
+
+    addresses = []
+    try:
+        i2c = SMBus(bus)
+    except PermissionError:
+        raise  # Let CLI handle with user-friendly message
+    except OSError:
+        raise  # Let CLI handle with user-friendly message
+
+    for addr in range(0x03, 0x78):  # Valid I2C address range
+        try:
+            i2c.write_quick(addr)
+            addresses.append(addr)
+        except OSError:
+            pass  # No device at this address
+
+    i2c.close()
+    return addresses
+
+
+def scan_sensors(bus: Optional[int] = None) -> List[DetectedSensor]:
+    """
+    Scan for known sensors on I2C buses.
+
+    Args:
+        bus: I2C bus number, or None to scan all available buses.
+
+    Returns:
+        List of detected sensors with their drivers
+    """
+    _init_known_sensors()
+
+    buses = [bus] if bus is not None else _discover_i2c_buses()
+
+    detected = []
+
+    for scan_bus in buses:
+        try:
+            addresses = scan_i2c(scan_bus)
+        except OSError:
+            logger.debug("Could not open I2C bus %d, skipping", scan_bus)
+            continue
+
+        if not addresses:
+            continue
+
+        logger.debug("I2C bus %d: found addresses %s", scan_bus,
+                      [f"0x{a:02X}" for a in addresses])
+
+        for address in addresses:
+            for driver, known_addr, _ in KNOWN_SENSORS:
+                if address == known_addr:
+                    already_found = any(
+                        d.address == address and d.bus == scan_bus and d.driver == driver
+                        for d in detected
+                    )
+                    if not already_found:
+                        try:
+                            sensor = driver(address=address, bus=scan_bus)
+                            if sensor.is_available():
+                                detected.append(DetectedSensor(
+                                    name=driver.name,
+                                    address=address,
+                                    bus=scan_bus,
+                                    driver=driver,
+                                    description=driver.description,
+                                ))
+                                break
+                        except Exception as e:
+                            logger.debug(f"Sensor probe failed at 0x{address:02X} on bus {scan_bus}: {e}")
+
+    # Also scan SPI buses if spidev is available
+    if _HAS_SPI:
+        try:
+            spi_matches = scan_spi()
+            for match in spi_matches:
+                detected.append(DetectedSensor(
+                    name=match.name,
+                    address=0,  # SPI doesn't use addresses
+                    bus=match.bus,
+                    driver=match.driver,
+                    description=match.description,
+                ))
+        except Exception as e:
+            logger.debug("SPI scan failed: %s", e)
+
+    return detected
+
+
+def auto_sensors(
+    bus: Optional[int] = None,
+    sample_rate: Optional[float] = None,
+    prefix: str = "",
+    detected: Optional[List[DetectedSensor]] = None,
+) -> SensorHub:
+    """
+    Auto-detect sensors and create a SensorHub.
+
+    Args:
+        bus: I2C bus number, or None to scan all available buses.
+        sample_rate: Override sample rate for all sensors (None = use defaults)
+        prefix: Prefix for all metric names
+        detected: Pre-scanned sensors to use (skips re-scanning if provided)
+
+    Returns:
+        SensorHub with all detected sensors added
+    """
+    hub = SensorHub()
+
+    if detected is None:
+        detected = scan_sensors(bus)
+
+    for info in detected:
+        if info.address == 0:
+            # SPI sensor
+            kwargs = {"bus_type": "spi", "spi_bus": info.bus}
+        else:
+            kwargs = {"address": info.address, "bus": info.bus}
+
+        if sample_rate is not None:
+            kwargs["sample_rate"] = sample_rate
+
+        if prefix:
+            kwargs["prefix"] = prefix
+
+        sensor = info.driver(**kwargs)
+        hub.add(sensor)
+
+    return hub
+
+
+def get_sensor_info() -> Dict[str, dict]:
+    """
+    Get information about all supported sensors.
+
+    Returns:
+        Dict mapping sensor names to their info
+    """
+    _init_known_sensors()
+
+    info = {}
+    seen_drivers = set()
+
+    for driver, addr, _ in KNOWN_SENSORS:
+        if driver not in seen_drivers:
+            info[driver.name] = {
+                "name": driver.name,
+                "description": driver.description,
+                "metrics": driver.metrics,
+                "i2c_addresses": [
+                    f"0x{a:02X}" for d, a, _ in KNOWN_SENSORS if d == driver
+                ],
+            }
+            seen_drivers.add(driver)
+
+    return info
