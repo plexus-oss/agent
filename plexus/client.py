@@ -49,7 +49,6 @@ from plexus.config import (
     get_endpoint,
     get_gateway_url,
     get_source_id,
-    require_login,
 )
 logger = logging.getLogger(__name__)
 
@@ -98,10 +97,11 @@ class Plexus:
         buffer_path: Optional[str] = None,
     ):
         self.api_key = api_key or get_api_key()
-
-        # Require login if no API key provided
         if not self.api_key:
-            require_login()
+            raise ValueError(
+                "No API key. Pass api_key=... or set PLEXUS_API_KEY. "
+                "Get a key at app.plexus.company/devices."
+            )
 
         self.endpoint = (endpoint or get_endpoint()).rstrip("/")
         self.gateway_url = get_gateway_url()

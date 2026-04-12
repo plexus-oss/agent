@@ -1,26 +1,25 @@
-# AGENTS.md — Plexus Agent
+# AGENTS.md — plexus-python
 
 Machine-readable interface for AI assistants and automation scripts.
 
 ## Environment Variables
 
-| Variable          | Description                                        | Example                       |
-| ----------------- | -------------------------------------------------- | ----------------------------- |
-| `PLEXUS_API_KEY`  | API key for authentication                         | `plx_xxxxx`                   |
-| `PLEXUS_ENDPOINT` | Server URL (default: `https://app.plexus.company`) | `https://custom.endpoint.com` |
-| `PLEXUS_ORG_ID`   | Organization ID                                    | `org_xxxxx`                   |
-| `PLEXUS_WS_URL`   | Gateway WebSocket URL (overrides API discovery)    | `ws://localhost:8080`         |
+| Variable                | Description                                  | Default                          |
+| ----------------------- | -------------------------------------------- | -------------------------------- |
+| `PLEXUS_API_KEY`        | API key for authentication (required)        | none                             |
+| `PLEXUS_GATEWAY_URL`    | Gateway HTTP ingest URL                      | `https://plexus-gateway.fly.dev` |
+| `PLEXUS_GATEWAY_WS_URL` | Gateway WebSocket URL                        | `wss://plexus-gateway.fly.dev`   |
 
 ## CLI Commands
 
 ```bash
-plexus start                           # Interactive setup + stream
-plexus start --key plx_xxxxx           # Non-interactive auth
+plexus start                           # Stream with PLEXUS_API_KEY env var
+plexus start --key plx_xxxxx           # Pass key inline
 plexus start --device-id my-device     # Set device identifier
-plexus reset                           # Clear config and start over
+plexus reset                           # Clear config
 ```
 
-Headless mode is auto-detected when output is piped or in a non-TTY environment. Set `PLEXUS_API_KEY` to skip interactive auth in headless contexts.
+An API key is required — set `PLEXUS_API_KEY` or pass `--key`. There is no interactive signup; get a key at app.plexus.company/devices.
 
 ## Exit Codes
 
@@ -55,25 +54,19 @@ px = Plexus(api_key="plx_xxxxx", persistent_buffer=True)
 plexus/
 ├── cli.py          # CLI entry point (click commands)
 ├── tui.py          # Live terminal dashboard (Rich)
-├── client.py       # Plexus HTTP client
-├── connector.py    # WebSocket connector
-├── config.py       # Config file management (~/.plexus/)
+├── client.py       # Plexus HTTP client (thin SDK)
+├── connector.py    # WebSocket daemon
+├── config.py       # Config file + env var management
 ├── detect.py       # Hardware auto-detection
-├── deps.py         # Dependency management
-├── sensors/        # Sensor drivers (I2C, system)
-│   ├── base.py     # BaseSensor, SensorHub
-│   └── drivers/    # Individual sensor implementations
-├── adapters/       # Protocol adapters
-│   ├── can.py      # CAN bus
-│   ├── mavlink.py  # MAVLink (drones)
-│   ├── mqtt.py     # MQTT bridge
-│   └── camera.py   # Camera capture
+├── deps.py         # Dependency helpers
+├── sensors/        # I2C sensor drivers + SensorHub
+└── adapters/       # Protocol adapters: CAN, MAVLink, MQTT, Modbus, OPC-UA, BLE, Serial
 ```
 
 ## Key Conventions
 
 - Config lives in `~/.plexus/config.json`
 - API keys are prefixed with `plx_`
-- Source IDs (device slugs) are used for metric namespacing
-- Telemetry is sent via WebSocket (real-time) and HTTP (persistence)
-- The TUI is enabled by default in interactive terminals; headless mode is auto-detected
+- Source IDs (device slugs) namespace metrics
+- HTTP ingest → `POST /ingest` on gateway; WebSocket → `/ws/device` for streaming + commands
+- Gateway resolves `org_id` server-side from the API key — clients do not supply it

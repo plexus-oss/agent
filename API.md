@@ -30,7 +30,7 @@ Then control streaming, recording, and configuration from [app.plexus.company/de
 Send data directly via HTTP:
 
 ```bash
-curl -X POST https://app.plexus.company/api/ingest \
+curl -X POST https://plexus-gateway.fly.dev/ingest \
   -H "x-api-key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -280,7 +280,7 @@ import requests
 import time
 
 requests.post(
-    "https://app.plexus.company/api/ingest",
+    "https://plexus-gateway.fly.dev/ingest",
     headers={"x-api-key": "plx_xxxxx"},
     json={
         "points": [{
@@ -296,7 +296,7 @@ requests.post(
 ### JavaScript
 
 ```javascript
-await fetch("https://app.plexus.company/api/ingest", {
+await fetch("https://plexus-gateway.fly.dev/ingest", {
   method: "POST",
   headers: {
     "x-api-key": "plx_xxxxx",
@@ -338,7 +338,7 @@ func main() {
     }
 
     body, _ := json.Marshal(points)
-    req, _ := http.NewRequest("POST", "https://app.plexus.company/api/ingest", bytes.NewBuffer(body))
+    req, _ := http.NewRequest("POST", "https://plexus-gateway.fly.dev/ingest", bytes.NewBuffer(body))
     req.Header.Set("x-api-key", "plx_xxxxx")
     req.Header.Set("Content-Type", "application/json")
 
@@ -354,7 +354,7 @@ func main() {
 
 void sendToPlexus(const char* metric, float value) {
     HTTPClient http;
-    http.begin("https://app.plexus.company/api/ingest");
+    http.begin("https://plexus-gateway.fly.dev/ingest");
     http.addHeader("Content-Type", "application/json");
     http.addHeader("x-api-key", "plx_xxxxx");
 
@@ -377,7 +377,7 @@ void sendToPlexus(const char* metric, float value) {
 API_KEY="plx_xxxxx"
 SOURCE_ID="sensor-001"
 
-curl -X POST https://app.plexus.company/api/ingest \
+curl -X POST https://plexus-gateway.fly.dev/ingest \
   -H "x-api-key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d "{
@@ -390,69 +390,38 @@ curl -X POST https://app.plexus.company/api/ingest \
   }"
 ```
 
-## Protocol Adapters
+## Bring Your Own Protocol
 
-Plexus supports protocol adapters for ingesting data from various sources.
-
-### CAN Bus Adapter
-
-Read CAN bus data with optional DBC signal decoding:
-
-```bash
-pip install plexus-python[can]
-```
+For MAVLink, CAN, MQTT, Modbus, OPC-UA, BLE, Serial, or any other protocol, use the upstream Python library directly and pass values to `px.send()`. Plexus stays out of your decode path:
 
 ```python
-from plexus.adapters import CANAdapter
+# CAN example — using python-can directly
+import can
 from plexus import Plexus
 
-plexus = Plexus(api_key="plx_xxx", source_id="vehicle-001")
-adapter = CANAdapter(
-    interface="socketcan",
-    channel="can0",
-    dbc_path="vehicle.dbc",  # Optional: decode signals
-)
+px = Plexus(api_key="plx_xxx", source_id="vehicle-001")
+bus = can.interface.Bus(channel="can0", bustype="socketcan")
 
-with adapter:
-    while True:
-        for metric in adapter.poll():
-            # Raw: can.raw.0x123 = "DEADBEEF"
-            # Decoded: engine_rpm = 2500
-            plexus.send(metric.name, metric.value, tags=metric.tags)
-```
-
-**Setup virtual CAN for testing (Linux):**
-
-```bash
-sudo modprobe vcan
-sudo ip link add dev vcan0 type vcan
-sudo ip link set up vcan0
-
-# Send test frames
-cansend vcan0 123#DEADBEEF
-```
-
-**Supported interfaces:** socketcan, pcan, vector, kvaser, slcan, virtual
-
-### MQTT Adapter
-
-Bridge MQTT brokers to Plexus:
-
-```bash
-pip install plexus-python[mqtt]
+for msg in bus:
+    px.send(f"can.0x{msg.arbitration_id:x}", int.from_bytes(msg.data, "big"))
 ```
 
 ```python
-from plexus.adapters import MQTTAdapter
+# MAVLink example — using pymavlink directly
+from pymavlink import mavutil
+from plexus import Plexus
 
-adapter = MQTTAdapter(
-    broker="localhost",
-    topic="sensors/#",
-    port=1883,
-)
-adapter.connect()
-adapter.run(on_data=my_callback)
+px = Plexus(api_key="plx_xxx", source_id="drone-001")
+conn = mavutil.mavlink_connection("udpin:0.0.0.0:14550")
+
+while True:
+    msg = conn.recv_match(blocking=True)
+    if msg.get_type() == "ATTITUDE":
+        px.send("attitude.roll", msg.roll)
+        px.send("attitude.pitch", msg.pitch)
 ```
+
+See [docs.plexus.dev/recipes](https://docs.plexus.dev/recipes) for more.
 
 ## Python SDK with Sensor Drivers
 

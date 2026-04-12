@@ -50,15 +50,12 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 
 PLEXUS_ENDPOINT = "https://app.plexus.company"
 PLEXUS_GATEWAY_URL = "https://plexus-gateway.fly.dev"
+PLEXUS_GATEWAY_WS_URL = "wss://plexus-gateway.fly.dev"
 
 DEFAULT_CONFIG = {
     "api_key": None,
     "source_id": None,
-    "org_id": None,
-    "source_name": None,
-    "endpoint": None,
     "persistent_buffer": True,
-    "sensors": None,
 }
 
 def get_config_path() -> Path:
@@ -117,12 +114,21 @@ def get_endpoint() -> str:
 
 
 def get_gateway_url() -> str:
-    """Get the ingest gateway base URL (POST /ingest, GET /ws/device)."""
+    """Get the ingest gateway base URL (POST /ingest)."""
     env_gateway = os.environ.get("PLEXUS_GATEWAY_URL")
     if env_gateway:
         return env_gateway.rstrip("/")
     config = load_config()
     return (config.get("gateway_url") or PLEXUS_GATEWAY_URL).rstrip("/")
+
+
+def get_gateway_ws_url() -> str:
+    """Get the gateway WebSocket base URL (/ws/device)."""
+    env_ws = os.environ.get("PLEXUS_GATEWAY_WS_URL")
+    if env_ws:
+        return env_ws.rstrip("/")
+    config = load_config()
+    return (config.get("gateway_ws_url") or PLEXUS_GATEWAY_WS_URL).rstrip("/")
 
 
 def get_source_id() -> Optional[str]:
@@ -137,30 +143,6 @@ def get_source_id() -> Optional[str]:
         save_config(config)
 
     return source_id
-
-
-def get_org_id() -> Optional[str]:
-    """Get the organization ID from config or environment variable."""
-    # Environment variable takes precedence
-    env_org = os.environ.get("PLEXUS_ORG_ID")
-    if env_org:
-        return env_org
-
-    config = load_config()
-    return config.get("org_id")
-
-
-def is_logged_in() -> bool:
-    """Check if device is authenticated (has API key)."""
-    return get_api_key() is not None
-
-
-def require_login() -> None:
-    """Raise an error if not logged in."""
-    if not is_logged_in():
-        raise RuntimeError(
-            "Not logged in. Run 'plexus start' to connect your account."
-        )
 
 
 def get_persistent_buffer() -> bool:

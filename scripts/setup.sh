@@ -280,24 +280,10 @@ echo "────────────────────────�
 echo ""
 
 if [ -n "$API_KEY" ]; then
-    # API key flow — write config and resolve org_id from the key
     mkdir -p "$HOME/.plexus"
-
-    # Resolve org_id from API key so the agent knows which org to connect to
     ENDPOINT="https://app.plexus.company"
-    ORG_ID=""
-    if command -v curl &> /dev/null; then
-        ORG_ID=$(curl -s -H "x-api-key: $API_KEY" "$ENDPOINT/api/auth/verify-key" 2>/dev/null | $PYTHON -c "import sys,json; print(json.load(sys.stdin).get('org_id',''))" 2>/dev/null)
-    fi
-
-    # Use device name as source_id if provided, otherwise use hostname
     SOURCE_ID="${DEVICE_NAME:-$(hostname)}"
-
-    if [ -n "$ORG_ID" ]; then
-        echo "{\"api_key\":\"$API_KEY\",\"endpoint\":\"$ENDPOINT\",\"org_id\":\"$ORG_ID\",\"source_id\":\"$SOURCE_ID\"}" > "$HOME/.plexus/config.json"
-    else
-        echo "{\"api_key\":\"$API_KEY\",\"endpoint\":\"$ENDPOINT\",\"source_id\":\"$SOURCE_ID\"}" > "$HOME/.plexus/config.json"
-    fi
+    echo "{\"api_key\":\"$API_KEY\",\"endpoint\":\"$ENDPOINT\",\"source_id\":\"$SOURCE_ID\"}" > "$HOME/.plexus/config.json"
 
     export PLEXUS_API_KEY="$API_KEY"
     echo -e "  ${GREEN}✓ API key configured${NC}"
