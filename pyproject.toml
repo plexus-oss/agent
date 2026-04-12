@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "plexus-python"
-version = "0.2.0"
+version = "0.3.0"
 description = "Thin Python SDK for Plexus — send telemetry in one line"
 readme = "README.md"
 license = "Apache-2.0"
@@ -29,10 +29,11 @@ classifiers = [
 ]
 dependencies = [
     "requests>=2.28.0",
+    "websocket-client>=1.7",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "ruff"]
+dev = ["pytest", "pytest-cov", "ruff", "websockets>=12"]
 
 [project.urls]
 Homepage = "https://plexus.dev"

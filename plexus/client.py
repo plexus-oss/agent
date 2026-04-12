@@ -48,6 +48,7 @@ from plexus.config import (
     get_api_key,
     get_endpoint,
     get_gateway_url,
+    get_gateway_ws_url,
     get_source_id,
 )
 logger = logging.getLogger(__name__)
@@ -95,6 +96,8 @@ class Plexus:
         max_buffer_size: int = 10000,
         persistent_buffer: bool = False,
         buffer_path: Optional[str] = None,
+        transport: str = "ws",
+        ws_url: Optional[str] = None,
     ):
         self.api_key = api_key or get_api_key()
         if not self.api_key:
@@ -113,6 +116,12 @@ class Plexus:
         self._run_id: Optional[str] = None
         self._session: Optional[requests.Session] = None
         self._store_frames: bool = False
+
+        if transport not in ("ws", "http"):
+            raise ValueError(f"transport must be 'ws' or 'http', got {transport!r}")
+        self.transport = transport
+        self._ws_url = (ws_url or get_gateway_ws_url())
+        self._ws = None  # lazily constructed in _ensure_ws()
 
         # Pluggable buffer backend for failed sends
         if persistent_buffer:
@@ -254,12 +263,54 @@ class Plexus:
         data_points = [self._make_point(m, v, ts, tags) for m, v in points]
         return self._send_points(data_points)
 
-    def _send_points(self, points: List[Dict[str, Any]]) -> bool:
-        """Send data points to the API with retry and buffering.
+    def _ensure_ws(self):
+        """Lazily construct and start the WebSocket transport."""
+        if self._ws is not None:
+            return self._ws
+        from plexus.ws import WebSocketTransport
+        from plexus import __version__
+        self._ws = WebSocketTransport(
+            api_key=self.api_key,
+            source_id=self.source_id,
+            ws_url=self._ws_url,
+            agent_version=__version__,
+        )
+        self._ws.start()
+        return self._ws
 
-        Retry behavior:
-        - Retries on: Timeout, ConnectionError, HTTP 429 (rate limit), HTTP 5xx
-        - No retry on: HTTP 401/403 (auth errors), HTTP 400/422 (bad request)
+    def on_command(
+        self,
+        name: str,
+        handler,
+        *,
+        description: Optional[str] = None,
+        params: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """Register a command handler (WebSocket transport only).
+
+        The handler is called as `handler(command_name, params_dict)` and may
+        return a dict (→ `result`) or raise (→ `error`). An `ack` is sent
+        automatically before the handler runs.
+
+        Must be called before the first send() so the command is advertised
+        in the auth frame.
+        """
+        if self.transport != "ws":
+            raise PlexusError("on_command requires transport='ws'")
+        ws = self._ensure_ws()
+        ws.register_command(name, handler, description=description, params=params)
+
+    def _send_points(self, points: List[Dict[str, Any]]) -> bool:
+        """Send data points to the gateway with retry and buffering.
+
+        Path:
+        - transport='ws': try the WebSocket first; if not yet authenticated or
+          the socket fails, fall through to the HTTP path so points still land.
+        - transport='http': always POST /ingest with retries.
+
+        Retry behavior (HTTP path):
+        - Retries on: Timeout, ConnectionError, HTTP 429, HTTP 5xx
+        - No retry on: HTTP 401/403 (auth), HTTP 400/422 (bad request)
         - After max retries: buffers points locally for next send attempt
         """
         if not self.api_key:
@@ -269,6 +320,18 @@ class Plexus:
 
         # Include any previously buffered points
         all_points = self._get_buffered_points() + points
+
+        # Preferred path: WebSocket.
+        if self.transport == "ws":
+            ws = self._ensure_ws()
+            # Brief wait on first call so startup races don't dump every point
+            # into the HTTP fallback path.
+            if not ws.is_authenticated:
+                ws.wait_authenticated(timeout=min(self.timeout, 5.0))
+            if ws.send_points(all_points):
+                self._clear_buffer()
+                return True
+            # Socket unavailable → fall through to HTTP.
 
         url = f"{self.gateway_url}/ingest"
         last_error: Optional[Exception] = None
@@ -451,6 +514,9 @@ class Plexus:
 
     def close(self):
         """Close the client and release resources."""
+        if self._ws is not None:
+            self._ws.stop()
+            self._ws = None
         if self._session:
             self._session.close()
             self._session = None

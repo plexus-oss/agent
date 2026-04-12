@@ -87,13 +87,47 @@ px.buffer_size()
 px.flush_buffer()
 ```
 
+## Transport
+
+By default the SDK connects over a **WebSocket** to `/ws/device` on the gateway — same wire protocol as the C SDK. This gives you:
+
+- lower-latency streaming of telemetry,
+- live command delivery from the UI / API to the device.
+
+If the socket is unavailable, sends transparently fall back to `POST /ingest` so no data is lost.
+
+```python
+# default — ws with http fallback
+px = Plexus()
+
+# force http (legacy)
+px = Plexus(transport="http")
+```
+
+### Handling commands
+
+Register a handler before the first `send()` so the command is advertised in the auth frame:
+
+```python
+def reboot(name, params):
+    delay = params.get("delay_s", 0)
+    # ... reboot logic ...
+    return {"ok": True, "delay": delay}
+
+px = Plexus()
+px.on_command("reboot", reboot, description="reboot the device")
+px.send("temperature", 72.5)   # opens the socket, waits for auth
+```
+
+The SDK sends an `ack` frame before invoking the handler, then a `result` frame with whatever the handler returns (or an `error` frame if it raises).
+
 ## Environment Variables
 
 | Variable                | Description                  | Default                          |
 | ----------------------- | ---------------------------- | -------------------------------- |
 | `PLEXUS_API_KEY`        | API key (required)           | none                             |
 | `PLEXUS_GATEWAY_URL`    | HTTP ingest URL              | `https://plexus-gateway.fly.dev` |
-| `PLEXUS_GATEWAY_WS_URL` | WebSocket URL (unused in SDK, for compatibility) | `wss://plexus-gateway.fly.dev` |
+| `PLEXUS_GATEWAY_WS_URL` | WebSocket URL              | `wss://plexus-gateway.fly.dev`   |
 
 ## Architecture
 

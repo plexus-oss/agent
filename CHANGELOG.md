@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0] - WebSocket transport
+
+Adds a wire-compatible WebSocket transport matching the `plexus-c` SDK. WS is now the default; failed sends transparently fall back to `POST /ingest`.
+
+### Added
+
+- `plexus.WebSocketTransport` — connects to `/ws/device` on the gateway. Exchanges the same `device_auth` / `authenticated` / `telemetry` / `heartbeat` / `typed_command` / `command_result` frames as `plexus-c`.
+- `Plexus(transport="ws" | "http")` — defaults to `"ws"`.
+- `Plexus.on_command(name, handler, description=..., params=...)` — register command handlers; automatic `ack`, handler return becomes `result`, exceptions become `error`.
+- `Plexus.close()` — stops the WebSocket thread.
+- Runtime dep: `websocket-client>=1.7`.
+- Tests: `tests/test_ws.py` (auth handshake, telemetry, command roundtrip, error paths).
+
 ## [0.2.0] - Thin SDK rewrite
 
 Breaking. `plexus-python` is now just the thin client — no agent, adapters, sensors, CLI, or TUI. The package is 886 lines with one runtime dependency (`requests`). Protocol integrations (MAVLink, CAN, MQTT, Modbus, OPC-UA, BLE, I2C sensors) now live as standalone recipes in `examples/`, using the upstream library directly (`pymavlink`, `python-can`, `paho-mqtt`, etc.) plus `px.send()`.

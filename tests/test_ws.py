@@ -1,0 +1,255 @@
+"""Wire-compatibility tests for plexus.ws.WebSocketTransport.
+
+Spins up a tiny `websockets`-based server on localhost that impersonates the
+gateway's /ws/device endpoint and asserts the frames the SDK exchanges match
+the C SDK / gateway contract:
+
+    device_auth → authenticated → telemetry → heartbeat → typed_command roundtrip
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import threading
+import time
+from typing import Any, Dict, List
+
+import pytest
+
+websockets = pytest.importorskip("websockets")
+from websockets.server import serve  # noqa: E402
+
+from plexus.ws import WebSocketTransport  # noqa: E402
+
+
+class _StubGateway:
+    """Minimal gateway stub. Records every frame the client sends."""
+
+    def __init__(self):
+        self.received: List[Dict[str, Any]] = []
+        self.auth_frame: Dict[str, Any] = {}
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._server = None
+        self._thread: threading.Thread | None = None
+        self.port = 0
+        self._ws = None
+        self._ready = threading.Event()
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        assert self._ready.wait(timeout=3), "stub server did not start"
+
+    def stop(self) -> None:
+        if self._loop and self._server:
+            self._loop.call_soon_threadsafe(self._server.close)
+        if self._thread:
+            self._thread.join(timeout=2)
+
+    async def _handler(self, ws, path="/ws/device"):
+        self._ws = ws
+        # First frame must be device_auth.
+        raw = await ws.recv()
+        msg = json.loads(raw)
+        self.auth_frame = msg
+        await ws.send(json.dumps({
+            "type": "authenticated",
+            "source_id": msg.get("source_id"),
+        }))
+        try:
+            async for raw in ws:
+                self.received.append(json.loads(raw))
+        except websockets.ConnectionClosed:
+            return
+
+    async def send_command(self, cmd_id: str, name: str, params: Dict[str, Any]):
+        assert self._ws is not None
+        await self._ws.send(json.dumps({
+            "type": "typed_command",
+            "id": cmd_id,
+            "command": name,
+            "params": params,
+        }))
+
+    def send_command_sync(self, cmd_id: str, name: str, params: Dict[str, Any]):
+        assert self._loop is not None
+        fut = asyncio.run_coroutine_threadsafe(
+            self.send_command(cmd_id, name, params), self._loop
+        )
+        fut.result(timeout=2)
+
+    def _run(self) -> None:
+        async def main():
+            self._server = await serve(self._handler, "127.0.0.1", 0)
+            self.port = self._server.sockets[0].getsockname()[1]
+            self._ready.set()
+            await self._server.wait_closed()
+
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        try:
+            self._loop.run_until_complete(main())
+        finally:
+            self._loop.close()
+
+
+@pytest.fixture
+def gateway():
+    g = _StubGateway()
+    g.start()
+    yield g
+    g.stop()
+
+
+def _url(port: int) -> str:
+    return f"ws://127.0.0.1:{port}"
+
+
+def _wait_until(pred, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_auth_handshake_and_telemetry(gateway):
+    t = WebSocketTransport(
+        api_key="plx_test_abc",
+        source_id="drone-001",
+        ws_url=_url(gateway.port),
+        agent_version="9.9.9",
+    )
+    t.start()
+    try:
+        assert t.wait_authenticated(timeout=3)
+
+        # Auth frame shape
+        assert gateway.auth_frame["type"] == "device_auth"
+        assert gateway.auth_frame["api_key"] == "plx_test_abc"
+        assert gateway.auth_frame["source_id"] == "drone-001"
+        assert gateway.auth_frame["platform"] == "python-sdk"
+        assert gateway.auth_frame["agent_version"] == "9.9.9"
+        # commands is omitted when none registered
+        assert "commands" not in gateway.auth_frame
+
+        # Telemetry frame shape
+        assert t.send_points([
+            {"metric": "battery_voltage", "value": 12.4, "timestamp": 1700000000000}
+        ])
+        assert _wait_until(
+            lambda: any(m.get("type") == "telemetry" for m in gateway.received)
+        )
+        tele = next(m for m in gateway.received if m["type"] == "telemetry")
+        assert tele["points"][0]["metric"] == "battery_voltage"
+        assert tele["points"][0]["value"] == 12.4
+    finally:
+        t.stop()
+
+
+def test_command_roundtrip(gateway):
+    got: Dict[str, Any] = {}
+
+    def reboot(name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        got["name"] = name
+        got["params"] = params
+        return {"ok": True, "delay": params.get("delay_s")}
+
+    t = WebSocketTransport(
+        api_key="plx_test_abc",
+        source_id="drone-001",
+        ws_url=_url(gateway.port),
+    )
+    t.register_command("reboot", reboot, description="reboot device")
+    t.start()
+    try:
+        assert t.wait_authenticated(timeout=3)
+        # Advertised in auth frame
+        assert gateway.auth_frame["commands"] == [
+            {"name": "reboot", "description": "reboot device"}
+        ]
+
+        gateway.send_command_sync("cmd-42", "reboot", {"delay_s": 10})
+
+        # Expect ack then result
+        assert _wait_until(
+            lambda: sum(
+                1 for m in gateway.received
+                if m.get("type") == "command_result" and m.get("id") == "cmd-42"
+            ) >= 2
+        )
+        results = [
+            m for m in gateway.received
+            if m.get("type") == "command_result" and m.get("id") == "cmd-42"
+        ]
+        assert results[0]["event"] == "ack"
+        assert results[0]["command"] == "reboot"
+        assert results[1]["event"] == "result"
+        assert results[1]["result"] == {"ok": True, "delay": 10}
+
+        assert got == {"name": "reboot", "params": {"delay_s": 10}}
+    finally:
+        t.stop()
+
+
+def test_unknown_command_returns_error(gateway):
+    t = WebSocketTransport(
+        api_key="plx_test_abc",
+        source_id="drone-001",
+        ws_url=_url(gateway.port),
+    )
+    t.start()
+    try:
+        assert t.wait_authenticated(timeout=3)
+        gateway.send_command_sync("cmd-1", "nope", {})
+        assert _wait_until(lambda: any(
+            m.get("type") == "command_result" and m.get("event") == "error"
+            for m in gateway.received
+        ))
+        err = next(
+            m for m in gateway.received
+            if m.get("type") == "command_result" and m.get("event") == "error"
+        )
+        assert "unknown command" in err["error"]
+    finally:
+        t.stop()
+
+
+def test_handler_exception_returns_error(gateway):
+    def bad(name, params):
+        raise RuntimeError("boom")
+
+    t = WebSocketTransport(
+        api_key="plx_test_abc",
+        source_id="drone-001",
+        ws_url=_url(gateway.port),
+    )
+    t.register_command("bad", bad)
+    t.start()
+    try:
+        assert t.wait_authenticated(timeout=3)
+        gateway.send_command_sync("cmd-9", "bad", {})
+        assert _wait_until(lambda: any(
+            m.get("type") == "command_result"
+            and m.get("event") == "error"
+            and m.get("id") == "cmd-9"
+            for m in gateway.received
+        ))
+        err = next(
+            m for m in gateway.received
+            if m.get("type") == "command_result"
+            and m.get("event") == "error"
+            and m.get("id") == "cmd-9"
+        )
+        assert err["error"] == "boom"
+    finally:
+        t.stop()
+
+
+def test_ensure_device_path():
+    from plexus.ws import _ensure_device_path
+    assert _ensure_device_path("wss://foo") == "wss://foo/ws/device"
+    assert _ensure_device_path("wss://foo/") == "wss://foo/ws/device"
+    assert _ensure_device_path("wss://foo/ws/device") == "wss://foo/ws/device"
