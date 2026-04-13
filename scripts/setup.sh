@@ -43,6 +43,41 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# --name is required so every device lands on a deliberate, unique identifier.
+# Previously we fell back to $(hostname), which silently merged streams on
+# cloned SD-card images where every device shared a hostname. If --name is
+# missing, prompt interactively in a TTY or fail loudly in non-interactive
+# contexts. Validation keeps the name safe for Redis keys, URLs, and logs.
+validate_device_name() {
+    local name="$1"
+    if [[ ! "$name" =~ ^[a-z0-9][a-z0-9_-]{1,62}$ ]]; then
+        echo -e "  ${RED}Invalid device name: \"$name\"${NC}"
+        echo "  Name must start with a letter or digit and contain only"
+        echo "  lowercase letters, digits, '-', or '_' (2-63 chars total)."
+        return 1
+    fi
+    return 0
+}
+
+if [ -z "$DEVICE_NAME" ]; then
+    if [ -t 0 ]; then
+        echo ""
+        echo "  Every device needs a unique name (e.g. drone-01, greenhouse-north)."
+        while [ -z "$DEVICE_NAME" ]; do
+            read -rp "  Device name: " DEVICE_NAME
+            if [ -n "$DEVICE_NAME" ] && ! validate_device_name "$DEVICE_NAME"; then
+                DEVICE_NAME=""
+            fi
+        done
+    else
+        echo -e "  ${RED}Error: --name is required${NC}" >&2
+        echo "  Example: curl -sL app.plexus.company/setup | bash -s -- --key plx_... --name drone-01" >&2
+        exit 1
+    fi
+elif ! validate_device_name "$DEVICE_NAME"; then
+    exit 1
+fi
+
 echo ""
 echo "┌─────────────────────────────────────────┐"
 echo "│  Plexus Agent Setup                     │"
@@ -282,14 +317,17 @@ echo ""
 if [ -n "$API_KEY" ]; then
     mkdir -p "$HOME/.plexus"
     ENDPOINT="https://app.plexus.company"
-    SOURCE_ID="${DEVICE_NAME:-$(hostname)}"
-    echo "{\"api_key\":\"$API_KEY\",\"endpoint\":\"$ENDPOINT\",\"source_id\":\"$SOURCE_ID\"}" > "$HOME/.plexus/config.json"
+    # install_id is intentionally NOT written here. The SDK generates it
+    # lazily on first run (plexus.config.get_install_id) so that pre-baked
+    # SD-card images get distinct install_ids per boot rather than sharing
+    # whatever we'd stamp here.
+    echo "{\"api_key\":\"$API_KEY\",\"endpoint\":\"$ENDPOINT\",\"source_id\":\"$DEVICE_NAME\"}" > "$HOME/.plexus/config.json"
 
     export PLEXUS_API_KEY="$API_KEY"
     echo -e "  ${GREEN}✓ API key configured${NC}"
-    if [ -n "$ORG_ID" ]; then
-        echo -e "  ${GREEN}✓ Organization resolved${NC}"
-    fi
+    echo -e "  ${GREEN}✓ Device name: ${CYAN}$DEVICE_NAME${NC}"
+    echo "    (the gateway may auto-suffix this if the name is already taken;"
+    echo "     the assigned name will be logged on first connect)"
     echo ""
 else
     echo "  No API key provided."
@@ -297,9 +335,7 @@ else
     echo "  To authenticate this device:"
     echo ""
     echo "  1. Get an API key from ${CYAN}https://app.plexus.company${NC} → Settings → Developer"
-    echo "  2. Run: ${CYAN}plexus start --key plx_xxxxx${NC}"
-    echo ""
-    echo "  Run ${CYAN}plexus start${NC} to sign in and connect."
+    echo "  2. Re-run this installer with: ${CYAN}--key plx_xxxxx --name $DEVICE_NAME${NC}"
     echo ""
 fi
 
@@ -307,10 +343,6 @@ fi
 echo "─────────────────────────────────────────"
 echo ""
 echo -e "  ${GREEN}Setup complete!${NC}"
-echo ""
-echo "  Quick commands:"
-echo "    plexus start     # Set up and stream"
-echo "    plexus reset     # Clear config and start over"
 echo ""
 echo "  Dashboard: ${CYAN}https://app.plexus.company${NC}"
 echo ""

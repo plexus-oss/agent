@@ -20,6 +20,21 @@ px.send("temperature", 72.5)
 
 Get an API key at [app.plexus.company](https://app.plexus.company) → Devices → Add Device.
 
+## Device identity
+
+Every device needs a unique `source_id`. The recommended way to set one on a real host is the bootstrap script, which requires a device name up front:
+
+```bash
+curl -sL https://app.plexus.company/setup | bash -s -- \
+  --key plx_xxx --name drone-01
+```
+
+The name must match `^[a-z0-9][a-z0-9_-]{1,62}$`. `setup.sh` refuses to run without `--name` (or without a TTY to prompt for one) — this is deliberate, because the previous `hostname` fallback silently merged telemetry from cloned SD-card images that all booted as `raspberrypi`.
+
+**If two devices end up requesting the same name**, the gateway auto-suffixes: the first connection gets `drone-01`, the second gets `drone-01_2`, the third `drone-01_3`, and so on. The SDK logs the rename at INFO and persists the assigned name to `~/.plexus/config.json` so the device keeps its identity across reboots. Under the hood, a per-installation UUID (`install_id`, lazily generated on first run) is what lets the gateway tell "same device reconnecting" from "different device claiming the same name."
+
+In normal code, you usually just pass `source_id=...` explicitly to `Plexus(...)` and never have to think about it.
+
 ## Usage
 
 ```python

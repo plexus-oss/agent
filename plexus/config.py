@@ -145,6 +145,40 @@ def get_source_id() -> Optional[str]:
     return source_id
 
 
+def get_install_id() -> str:
+    """Get the device install ID, generating one if not set.
+
+    The install_id is a stable per-installation UUID. It is generated lazily
+    on first run (NOT at image-build time) so that cloned SD-card images
+    naturally get distinct install_ids on their first boot. The gateway uses
+    it to tell "same device reconnecting" from "different device claiming the
+    same name" when resolving source_id collisions.
+    """
+    config = load_config()
+    install_id = config.get("install_id")
+
+    if not install_id:
+        import uuid
+        install_id = uuid.uuid4().hex
+        config["install_id"] = install_id
+        save_config(config)
+
+    return install_id
+
+
+def set_source_id(source_id: str) -> None:
+    """Persist an updated source_id to the config file.
+
+    Called by the SDK when the gateway returns an auto-suffixed name so the
+    assigned name is stable across reconnects.
+    """
+    config = load_config()
+    if config.get("source_id") == source_id:
+        return
+    config["source_id"] = source_id
+    save_config(config)
+
+
 def get_persistent_buffer() -> bool:
     """Get persistent buffer setting. Default True (store-and-forward enabled)."""
     config = load_config()
