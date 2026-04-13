@@ -5,8 +5,14 @@ Wire-compatible with the C SDK (`plexus_ws.c`). Targets the gateway's
 `/ws/device` endpoint and exchanges the same JSON frames:
 
     client → {"type": "device_auth", "api_key": ..., "source_id": ...,
-              "platform": "python-sdk", "agent_version": ..., "commands": [...]}
+              "install_id": ..., "platform": "python-sdk",
+              "agent_version": ..., "commands": [...]}
     server → {"type": "authenticated", "source_id": ...}
+
+The server-returned `source_id` in the `authenticated` frame is
+authoritative: if the gateway auto-suffixed on a collision (e.g. the
+desired name was already claimed by a different install_id), the
+client's `source_id` is updated in place to match.
     client → {"type": "telemetry", "points": [...]}
     client → {"type": "heartbeat", "source_id": ..., "agent_version": ...}   # every 30s
     server → {"type": "typed_command", "id": ..., "command": ..., "params": {...}}
@@ -78,9 +84,11 @@ class WebSocketTransport:
         source_id: str,
         ws_url: str,
         *,
+        install_id: str = "",
         agent_version: str = "0.0.0",
         platform: str = "python-sdk",
         auto_reconnect: bool = True,
+        on_source_id_assigned: Optional[Callable[[str], None]] = None,
     ):
         if not api_key:
             raise ValueError("api_key required")
@@ -89,10 +97,12 @@ class WebSocketTransport:
 
         self.api_key = api_key
         self.source_id = source_id
+        self.install_id = install_id
         self.ws_url = _ensure_device_path(ws_url)
         self.agent_version = agent_version
         self.platform = platform
         self.auto_reconnect = auto_reconnect
+        self._on_source_id_assigned = on_source_id_assigned
 
         self._commands: Dict[str, _RegisteredCommand] = {}
         self._ws: Optional[websocket.WebSocket] = None
@@ -184,13 +194,16 @@ class WebSocketTransport:
             self._ws = ws
 
         # 1. Send device_auth
+        desired_source_id = self.source_id
         auth = {
             "type": "device_auth",
             "api_key": self.api_key,
-            "source_id": self.source_id,
+            "source_id": desired_source_id,
             "platform": self.platform,
             "agent_version": self.agent_version,
         }
+        if self.install_id:
+            auth["install_id"] = self.install_id
         if self._commands:
             auth["commands"] = [c.to_manifest() for c in self._commands.values()]
         ws.send(json.dumps(auth))
@@ -205,6 +218,22 @@ class WebSocketTransport:
         msg = _safe_json(raw)
         if msg.get("type") != "authenticated":
             raise RuntimeError(f"auth failed: {msg}")
+
+        # The gateway may return a different source_id if the desired name
+        # was already claimed by another install — adopt the assigned value
+        # so all subsequent frames (heartbeats, future reconnects) use it.
+        assigned = msg.get("source_id")
+        if isinstance(assigned, str) and assigned and assigned != self.source_id:
+            logger.info(
+                "plexus ws source_id auto-suffixed: requested=%s assigned=%s",
+                desired_source_id, assigned,
+            )
+            self.source_id = assigned
+            if self._on_source_id_assigned is not None:
+                try:
+                    self._on_source_id_assigned(assigned)
+                except Exception as e:  # pragma: no cover - callback errors must not break auth
+                    logger.debug("on_source_id_assigned callback raised: %s", e)
 
         self._authenticated.set()
         self._backoff_attempt = 0

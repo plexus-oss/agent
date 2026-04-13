@@ -152,33 +152,35 @@ For real-time UI-controlled streaming, devices connect via WebSocket.
 
 ### Device Authentication
 
-Devices authenticate using an API key:
+Devices authenticate using an API key. The `source_id` in the request is the device's *desired* name; the server may return a different, auto-suffixed name in the `authenticated` frame if the desired name is already claimed by another device (see [Device identity](../README.md#device-identity) in the README).
 
 ```json
 // Device → Server
 {
   "type": "device_auth",
   "api_key": "plx_xxxxx",
-  "source_id": "my-device-001",
-  "platform": "Linux",
-  "sensors": [
-    {
-      "name": "MPU6050",
-      "description": "6-axis IMU",
-      "metrics": ["accel_x", "accel_y", "accel_z", "gyro_x", "gyro_y", "gyro_z"],
-      "sample_rate": 100,
-      "prefix": "",
-      "available": true
-    }
-  ]
+  "source_id": "drone-01",
+  "install_id": "c9f2e0b46f4a4f6a8c3e1d5b0a2e7f91",
+  "platform": "python-sdk",
+  "agent_version": "0.3.1"
 }
 
 // Server → Device
 {
   "type": "authenticated",
-  "source_id": "my-device-001"
+  "source_id": "drone-01"
+}
+
+// Server → Device (collision case)
+{
+  "type": "authenticated",
+  "source_id": "drone-01_2"
 }
 ```
+
+The SDK **adopts** whatever `source_id` the server returns and uses it for all subsequent frames, heartbeats, and reconnects. It also persists the assigned name locally so reconnects go straight to the claimed slot.
+
+`install_id` is a stable per-installation UUID, generated on the device's first run and saved to `~/.plexus/config.json`. It lets the server distinguish a rebooting device from a new device trying to claim an existing name. Legacy SDKs that omit `install_id` continue to work as before (the server passes the declared `source_id` through unchanged).
 
 ### Message Types (Dashboard → Device)
 
