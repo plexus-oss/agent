@@ -4,11 +4,11 @@ Machine-readable interface for AI assistants and automation scripts.
 
 ## Environment Variables
 
-| Variable                | Description                                  | Default                          |
-| ----------------------- | -------------------------------------------- | -------------------------------- |
-| `PLEXUS_API_KEY`        | API key for authentication (required)        | none                             |
-| `PLEXUS_GATEWAY_URL`    | Gateway HTTP ingest URL                      | `https://plexus-gateway.fly.dev` |
-| `PLEXUS_GATEWAY_WS_URL` | Gateway WebSocket URL                        | `wss://plexus-gateway.fly.dev`   |
+| Variable                | Description                           | Default                          |
+| ----------------------- | ------------------------------------- | -------------------------------- |
+| `PLEXUS_API_KEY`        | API key for authentication (required) | none                             |
+| `PLEXUS_GATEWAY_URL`    | Gateway HTTP ingest URL               | `https://plexus-gateway.fly.dev` |
+| `PLEXUS_GATEWAY_WS_URL` | Gateway WebSocket URL                 | `wss://plexus-gateway.fly.dev`   |
 
 ## CLI Commands
 
@@ -46,21 +46,6 @@ px.send_batch([
 
 # Persistent buffering for reliability
 px = Plexus(api_key="plx_xxxxx", persistent_buffer=True)
-```
-
-## Project Structure
-
-```
-plexus/
-├── cli.py          # CLI entry point (click commands)
-├── tui.py          # Live terminal dashboard (Rich)
-├── client.py       # Plexus HTTP client (thin SDK)
-├── connector.py    # WebSocket daemon
-├── config.py       # Config file + env var management
-├── detect.py       # Hardware auto-detection
-├── deps.py         # Dependency helpers
-├── sensors/        # I2C sensor drivers + SensorHub
-└── adapters/       # Protocol adapters: CAN, MAVLink, MQTT, Modbus, OPC-UA, BLE, Serial
 ```
 
 ## Key Conventions

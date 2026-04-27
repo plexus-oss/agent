@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] - Stable device identity
+## [0.4.0] - 2026-04-27 - Stable device identity + CLI
 
 The gateway is now authoritative for a device's `source_id`. The SDK sends a
 locally-generated `install_id` in the auth frame; the gateway atomically
@@ -14,9 +14,19 @@ images shared a hostname or when two operators picked the same name.
 
 ### Added
 
+- `plexus init` (alias `plexus login`) — fly.io / vercel-style browser auth
+  flow. Spins up a localhost listener, opens `${PLEXUS_ENDPOINT}/auth/cli`
+  with a state-protected callback, and persists the issued key to
+  `~/.plexus/config.json`. Console script registered in `pyproject.toml`
+  (`plexus = "plexus.cli:main"`); stdlib-only, no new runtime deps.
 - `plexus.config.get_install_id()` — lazy per-installation UUID, persisted
   to `~/.plexus/config.json`. **Not** written by `setup.sh`: it's minted by
   the SDK on first run so pre-baked images get distinct IDs per boot.
+- `PLEXUS_INSTALL_ID` env var — override for `get_install_id()` so
+  ephemeral containers (Fly machines, k8s pods, CI runners) can pin a
+  stable identity across restarts when the config filesystem is ephemeral.
+  Without this, every redeploy gets a fresh UUID and the gateway
+  auto-suffixes the source_id.
 - `plexus.config.set_source_id()` — persist the gateway-assigned name after
   auto-suffix resolution.
 - `WebSocketTransport(install_id=..., on_source_id_assigned=...)` — the

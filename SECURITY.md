@@ -22,7 +22,7 @@ Instead, email **support@plexus.company** with:
 ## Supported Versions
 
 | Version | Supported |
-|---------|-----------|
+| ------- | --------- |
 | 0.9.x   | Yes       |
 | < 0.9   | No        |
 

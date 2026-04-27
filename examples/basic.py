@@ -11,7 +11,7 @@ import time
 
 from plexus import Plexus
 
-px = Plexus(source_id="demo-device")
+px = Plexus(api_key="plx_123...", source_id="demo-device")
 
 while True:
     px.send("temperature", 20 + random.random() * 5)

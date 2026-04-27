@@ -153,7 +153,21 @@ def get_install_id() -> str:
     naturally get distinct install_ids on their first boot. The gateway uses
     it to tell "same device reconnecting" from "different device claiming the
     same name" when resolving source_id collisions.
+
+    Resolution order:
+      1. ``PLEXUS_INSTALL_ID`` env var — lets ephemeral containers (Fly
+         machines, CI runners, Kubernetes pods) pin a stable identity
+         across restarts when the config filesystem is ephemeral. Without
+         this, every redeploy generates a new install_id and the gateway
+         auto-suffixes the source_id to avoid a collision with the prior
+         install ("gw-001" → "gw-001_2" → "gw-001_3"…).
+      2. ``install_id`` in the on-disk config.
+      3. Newly-generated UUID, persisted to config.
     """
+    env_id = os.environ.get("PLEXUS_INSTALL_ID", "").strip()
+    if env_id:
+        return env_id
+
     config = load_config()
     install_id = config.get("install_id")
 
