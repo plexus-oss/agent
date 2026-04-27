@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.3] - 2026-04-27 - Re-release of 0.4.2 with correct __version__
+
+The 0.4.2 wheel shipped with `plexus.__version__ == "0.4.1"` because the
+tag was cut before the `__init__.py` bump landed. 0.4.3 is the same code
+with `__version__ = "0.4.3"`. 0.4.2 has been yanked.
+
 ## [0.4.2] - 2026-04-27 - CLI auth: branded success page + auto-redirect
 
 ### Changed
