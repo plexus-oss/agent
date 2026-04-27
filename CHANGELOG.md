@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.2] - 2026-04-27 - CLI auth: branded success page + auto-redirect
+
+### Changed
+
+- `plexus/cli.py` — the localhost callback's success and error pages now
+  match the Plexus app's dark aesthetic (black background, zinc-800
+  bordered card, white headlines, monospace URL, status-color badge).
+- After a successful `plexus init`, the browser tab now auto-redirects
+  to the configured app endpoint (`PLEXUS_ENDPOINT`, default
+  `https://app.plexus.company`) after a 10-second countdown, so first-
+  time users land on their dashboard without having to navigate there
+  manually. Falls back to `<meta http-equiv="refresh">` when JS is off.
+
 ## [0.4.1] - 2026-04-27 - CI fixes for 0.4.0
 
 ### Fixed
