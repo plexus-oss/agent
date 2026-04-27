@@ -36,6 +36,8 @@ Note: Requires authentication. Run 'plexus start' or set PLEXUS_API_KEY.
 import gzip
 import json
 import logging
+import os
+import sys
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -54,6 +56,20 @@ from plexus.config import (
     set_source_id,
 )
 logger = logging.getLogger(__name__)
+
+# Status messages to stderr so users running `python my_script.py` see what's
+# happening without having to configure logging. Set PLEXUS_QUIET=1 to disable.
+_QUIET = os.environ.get("PLEXUS_QUIET", "").lower() in ("1", "true", "yes")
+
+
+def _say(line: str) -> None:
+    if _QUIET:
+        return
+    try:
+        sys.stderr.write(f"[plexus] {line}\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
 
 # Flexible value type - supports any JSON-serializable value
 FlexValue = Union[int, float, str, bool, Dict[str, Any], List[Any]]
@@ -132,6 +148,12 @@ class Plexus:
             )
         else:
             self._buffer: BufferBackend = MemoryBuffer(max_size=max_buffer_size)
+
+        # State that drives the [plexus] stderr status line.
+        self._announced_first_send = False
+        self._announced_http_fallback = False
+        self._announced_buffering = False
+        self._send_count = 0
 
     @property
     def max_buffer_size(self):
@@ -344,8 +366,14 @@ class Plexus:
                 ws.wait_authenticated(timeout=min(self.timeout, 5.0))
             if ws.send_points(all_points):
                 self._clear_buffer()
+                self._note_send(len(all_points), via="ws")
                 return True
             # Socket unavailable → fall through to HTTP.
+            if not self._announced_http_fallback:
+                _say(
+                    f"⚠ WebSocket unavailable, falling back to POST {self.gateway_url}/ingest"
+                )
+                self._announced_http_fallback = True
 
         url = f"{self.gateway_url}/ingest"
         last_error: Optional[Exception] = None
@@ -372,8 +400,11 @@ class Plexus:
 
                 # Auth errors - don't retry, raise immediately
                 if response.status_code == 401:
+                    _say("✗ Gateway rejected the API key (401).")
+                    _say("  Run `plexus whoami` to confirm what's on disk.")
                     raise AuthenticationError("Invalid API key")
                 elif response.status_code == 403:
+                    _say("✗ API key lacks write scope (403).")
                     raise AuthenticationError("API key doesn't have write permissions")
 
                 # Bad request errors - don't retry (client error)
@@ -403,6 +434,7 @@ class Plexus:
                 # Success - clear the buffer and return
                 elif response.status_code < 400:
                     self._clear_buffer()
+                    self._note_send(len(all_points), via="http")
                     return True
 
                 # Other 4xx errors - don't retry
@@ -427,10 +459,34 @@ class Plexus:
 
         # All retries failed - buffer the points for later
         self._add_to_buffer(points)
+        if not self._announced_buffering:
+            _say(
+                f"⏸ Send failed, buffering points locally ({self.buffer_size()} queued). "
+                f"Will retry on next call."
+            )
+            self._announced_buffering = True
 
         if last_error:
             raise last_error
         raise PlexusError("Send failed after all retries")
+
+    def _note_send(self, count: int, via: str) -> None:
+        """Bookkeeping so the user sees the moment data starts flowing.
+
+        First successful send → "✓ First N points landed (via WS/HTTP)".
+        Recovery from a buffering state → "✓ Sending again (was buffered)".
+        Otherwise silent — every-send chatter would be unbearable at 100 Hz.
+        """
+        self._send_count += count
+        if not self._announced_first_send:
+            _say(
+                f"✓ First {count} point{'s' if count != 1 else ''} landed "
+                f"(via {via}). source_id={self.source_id!r}"
+            )
+            self._announced_first_send = True
+        elif self._announced_buffering:
+            _say(f"✓ Sending again (drained the local buffer).")
+            self._announced_buffering = False
 
     def _add_to_buffer(self, points: List[Dict[str, Any]]) -> None:
         """Add points to the local buffer for later retry."""

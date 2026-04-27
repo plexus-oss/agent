@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.4.4] - 2026-04-27 - Stderr status output
+
+### Added
+
+- `[plexus] …` status lines on stderr at every meaningful state change so
+  scripts that don't configure the `logging` module still tell the user
+  what's going on. Set `PLEXUS_QUIET=1` to suppress.
+  - `✓ Connected to gateway as <source_id>` on first WS auth
+  - `✓ Reconnected as <source_id>` after a drop
+  - `✓ First N points landed (via ws|http)` on first successful send
+  - `⚠ WebSocket unavailable, falling back to POST /ingest` on WS failure
+  - `✗ Auth rejected by gateway: …` / `✗ Gateway rejected the API key (401)`
+    on auth failures, with a `plexus whoami` hint
+  - `⏸ Send failed, buffering points locally (N queued)` when offline
+  - `✓ Sending again (drained the local buffer)` on recovery
+
+### Why
+
+Users running `python my_script.py` saw nothing — by default Python's
+`logging` module emits at WARNING and above only on the console, so a
+silent SDK was indistinguishable from "everything's working" until they
+checked the dashboard. This makes the trip from `python my_script.py` to
+"first row visible in the UI" auditable in one terminal.
+
 ## [0.4.3] - 2026-04-27 - Re-release of 0.4.2 with correct __version__
 
 The 0.4.2 wheel shipped with `plexus.__version__ == "0.4.1"` because the

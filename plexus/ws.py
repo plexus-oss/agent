@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -42,6 +44,23 @@ except ImportError as e:  # pragma: no cover - import-time failure is obvious
     ) from e
 
 logger = logging.getLogger(__name__)
+
+# By default, print connection status to stderr so users running
+# `python my_script.py` can see what's happening without having to
+# configure the logging module. Set PLEXUS_QUIET=1 to disable.
+_QUIET = os.environ.get("PLEXUS_QUIET", "").lower() in ("1", "true", "yes")
+
+
+def _say(line: str) -> None:
+    """Single-line status message to stderr. Skipped if PLEXUS_QUIET=1."""
+    if _QUIET:
+        return
+    try:
+        sys.stderr.write(f"[plexus] {line}\n")
+        sys.stderr.flush()
+    except Exception:
+        # Stderr blew up — don't take the whole client down with it.
+        pass
 
 AUTH_TIMEOUT_S = 10.0
 HEARTBEAT_INTERVAL_S = 30.0
@@ -169,11 +188,22 @@ class WebSocketTransport:
     # ------------------------------------------------------------------ thread
 
     def _run(self) -> None:
+        first_attempt = True
         while not self._stop.is_set():
             try:
                 self._connect_and_serve()
             except Exception as e:
-                logger.warning("plexus ws loop error: %s", e)
+                msg = str(e)
+                logger.warning("plexus ws loop error: %s", msg)
+                # Loud the first time so users running a script see it,
+                # quieter on subsequent retries to avoid log spam.
+                if first_attempt:
+                    if "auth failed" in msg.lower() or "invalid api key" in msg.lower():
+                        _say(f"✗ Auth rejected by gateway: {msg}")
+                        _say("  Check your key — `plexus whoami` shows what's on disk.")
+                    else:
+                        _say(f"✗ Connection failed: {msg}")
+                        _say("  SDK will keep retrying with backoff.")
             finally:
                 self._authenticated.clear()
                 with self._ws_lock:
@@ -185,6 +215,7 @@ class WebSocketTransport:
             delay = _backoff_delay(self._backoff_attempt)
             self._backoff_attempt = min(self._backoff_attempt + 1, 10)
             logger.info("plexus ws reconnect in %.1fs", delay)
+            first_attempt = False
             if self._stop.wait(timeout=delay):
                 break
 
@@ -235,9 +266,15 @@ class WebSocketTransport:
                 except Exception as e:  # pragma: no cover - callback errors must not break auth
                     logger.debug("on_source_id_assigned callback raised: %s", e)
 
+        was_reconnect = self._backoff_attempt > 0
         self._authenticated.set()
         self._backoff_attempt = 0
         logger.info("plexus ws authenticated as %s", self.source_id)
+        if was_reconnect:
+            _say(f"✓ Reconnected as {self.source_id}")
+        else:
+            _say(f"✓ Connected to gateway as {self.source_id}")
+            _say(f"  endpoint: {self.ws_url}")
 
         # 3. Read loop with heartbeat pump
         ws.settimeout(1.0)
