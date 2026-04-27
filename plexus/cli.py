@@ -201,7 +201,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     cfg["api_key"] = result.key
     config.save_config(cfg)
     print(f"✓ Saved API key as {name}.")
-    print(f"  ~/.plexus/config.json")
+    print("  ~/.plexus/config.json")
     return 0
 
 

@@ -329,23 +329,27 @@ class TestThreadSafety:
 
         def send_metric(metric_id):
             try:
-                with patch.object(client, "_get_session") as mock_session:
-                    mock_session.return_value.post.side_effect = (
-                        requests.exceptions.Timeout()
-                    )
-                    try:
-                        client.send(f"metric_{metric_id}", float(metric_id))
-                    except PlexusError:
-                        pass  # Expected
+                try:
+                    client.send(f"metric_{metric_id}", float(metric_id))
+                except PlexusError:
+                    pass  # Expected
             except Exception as e:
                 errors.append(e)
 
-        # Launch multiple threads
-        threads = [threading.Thread(target=send_metric, args=(i,)) for i in range(20)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        # Patch once outside the threads — patch.object mutates instance
+        # attrs and is not thread-safe under contention. We just need every
+        # call to fail so the buffer takes the write.
+        mock_session = MagicMock()
+        mock_session.return_value.post.side_effect = requests.exceptions.Timeout()
+
+        with patch.object(client, "_get_session", mock_session):
+            threads = [
+                threading.Thread(target=send_metric, args=(i,)) for i in range(20)
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
 
         # No errors should have occurred
         assert len(errors) == 0

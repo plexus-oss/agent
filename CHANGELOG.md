@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.1] - 2026-04-27 - CI fixes for 0.4.0
+
+### Fixed
+
+- `plexus/cli.py` — drop a stray `f` prefix on a non-interpolated string
+  that ruff (`F541`) caught in CI.
+- `tests/test_retry.py::test_concurrent_sends` — move `patch.object` out
+  of the per-thread closure. `mock.patch.object` mutates instance
+  attributes and is not thread-safe; under 20 concurrent threads the
+  state would leak and surface as a spurious `AttributeError` on Python
+  3.8.
+
 ## [0.4.0] - 2026-04-27 - Stable device identity + CLI
 
 The gateway is now authoritative for a device's `source_id`. The SDK sends a
