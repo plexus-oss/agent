@@ -485,7 +485,7 @@ class Plexus:
             )
             self._announced_first_send = True
         elif self._announced_buffering:
-            _say(f"✓ Sending again (drained the local buffer).")
+            _say("✓ Sending again (drained the local buffer).")
             self._announced_buffering = False
 
     def _add_to_buffer(self, points: List[Dict[str, Any]]) -> None:

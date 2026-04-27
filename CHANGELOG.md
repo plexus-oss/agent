@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.5] - 2026-04-27 - Stderr status output (re-release of 0.4.4)
+
+Same code as 0.4.4 — the 0.4.4 publish workflow failed lint on a stray
+`f`-prefix in `plexus/client.py:488`. PyPI doesn't allow re-uploading a
+version, so 0.4.5 is the corrected re-release.
+
 ## [0.4.4] - 2026-04-27 - Stderr status output
 
 ### Added
