@@ -108,6 +108,7 @@ class WebSocketTransport:
         platform: str = "python-sdk",
         auto_reconnect: bool = True,
         on_source_id_assigned: Optional[Callable[[str], None]] = None,
+        on_clock_synced: Optional[Callable[[int], None]] = None,
     ):
         if not api_key:
             raise ValueError("api_key required")
@@ -122,6 +123,7 @@ class WebSocketTransport:
         self.platform = platform
         self.auto_reconnect = auto_reconnect
         self._on_source_id_assigned = on_source_id_assigned
+        self._on_clock_synced = on_clock_synced
 
         self._commands: Dict[str, _RegisteredCommand] = {}
         self._ws: Optional[websocket.WebSocket] = None
@@ -130,6 +132,7 @@ class WebSocketTransport:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._backoff_attempt = 0
+        self._clock_offset_ms: int = 0
 
     # ------------------------------------------------------------------ public
 
@@ -174,6 +177,10 @@ class WebSocketTransport:
     @property
     def is_authenticated(self) -> bool:
         return self._authenticated.is_set()
+
+    @property
+    def clock_offset_ms(self) -> int:
+        return self._clock_offset_ms
 
     def send_points(self, points: List[Dict[str, Any]]) -> bool:
         """Send a telemetry frame. Returns False if the socket is not
@@ -249,6 +256,15 @@ class WebSocketTransport:
         msg = _safe_json(raw)
         if msg.get("type") != "authenticated":
             raise RuntimeError(f"auth failed: {msg}")
+
+        server_ts = msg.get("server_time_ms")
+        if isinstance(server_ts, (int, float)) and server_ts > 0:
+            self._clock_offset_ms = int(server_ts) - int(time.time() * 1000)
+            if self._on_clock_synced is not None:
+                try:
+                    self._on_clock_synced(self._clock_offset_ms)
+                except Exception as e:
+                    logger.debug("on_clock_synced callback raised: %s", e)
 
         # The gateway may return a different source_id if the desired name
         # was already claimed by another install — adopt the assigned value

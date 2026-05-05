@@ -61,6 +61,7 @@ class _StubGateway:
         await ws.send(json.dumps({
             "type": "authenticated",
             "source_id": returned_source_id,
+            "server_time_ms": int(time.time() * 1000),
         }))
         try:
             async for raw in ws:
@@ -332,3 +333,48 @@ def test_ensure_device_path():
     assert _ensure_device_path("wss://foo") == "wss://foo/ws/device"
     assert _ensure_device_path("wss://foo/") == "wss://foo/ws/device"
     assert _ensure_device_path("wss://foo/ws/device") == "wss://foo/ws/device"
+
+
+def test_clock_offset_computed_from_authenticated_frame():
+    # Stub sends a server_time_ms that is 30 seconds ahead of real time.
+    # The transport's clock_offset_ms should be close to +30_000.
+    fake_offset_ms = 30_000
+
+    class _OffsetStubGateway(_StubGateway):
+        async def _handler(self, ws, path="/ws/device"):
+            self._ws = ws
+            raw = await ws.recv()
+            msg = json.loads(raw)
+            self.auth_frame = msg
+            returned_source_id = self.assigned_source_id or msg.get("source_id")
+            await ws.send(json.dumps({
+                "type": "authenticated",
+                "source_id": returned_source_id,
+                "server_time_ms": int(time.time() * 1000) + fake_offset_ms,
+            }))
+            try:
+                async for raw in ws:
+                    self.received.append(json.loads(raw))
+            except websockets.ConnectionClosed:
+                return
+
+    g = _OffsetStubGateway()
+    g.start()
+    try:
+        seen: List[int] = []
+        t = WebSocketTransport(
+            api_key="plx_test_abc",
+            source_id="drone-001",
+            ws_url=_url(g.port),
+            on_clock_synced=lambda offset: seen.append(offset),
+        )
+        t.start()
+        try:
+            assert t.wait_authenticated(timeout=3)
+            assert abs(t.clock_offset_ms - fake_offset_ms) < 500
+            assert len(seen) == 1
+            assert abs(seen[0] - fake_offset_ms) < 500
+        finally:
+            t.stop()
+    finally:
+        g.stop()

@@ -140,6 +140,7 @@ class Plexus:
         self.transport = transport
         self._ws_url = (ws_url or get_gateway_ws_url())
         self._ws = None  # lazily constructed in _ensure_ws()
+        self._clock_offset_ms: int = 0
 
         # Pluggable buffer backend for failed sends
         if persistent_buffer:
@@ -175,17 +176,16 @@ class Plexus:
             self._session.headers["User-Agent"] = f"plexus-python/{__version__}"
         return self._session
 
-    @staticmethod
-    def _normalize_ts_ms(timestamp: Optional[float] = None) -> int:
+    def _normalize_ts_ms(self, timestamp: Optional[float] = None) -> int:
         """Normalize a timestamp to milliseconds.
 
         Accepts:
-            - None: returns current time in ms
-            - float seconds (e.g. time.time()): converts to ms
-            - int/float ms: returned as-is
+            - None: returns current time in ms, corrected by server clock offset
+            - float seconds (e.g. time.time()): converts to ms (no offset applied)
+            - int/float ms: returned as-is (no offset applied)
         """
         if timestamp is None:
-            return int(time.time() * 1000)
+            return int(time.time() * 1000) + self._clock_offset_ms
         # Heuristic: values < 1e12 are seconds
         if timestamp > 0 and timestamp < 1e12:
             return int(timestamp * 1000)
@@ -258,6 +258,30 @@ class Plexus:
         point = self._make_point(metric, value, timestamp, tags, data_class)
         return self._send_points([point])
 
+    def event(
+        self,
+        name: str,
+        data: FlexValue,
+        timestamp: Optional[float] = None,
+        tags: Optional[Dict[str, str]] = None,
+    ) -> bool:
+        """
+        Send a named event with text or structured data.
+
+        Args:
+            name: Event type (e.g., "fault", "state_change", "log")
+            data: Text or JSON-serializable value (string, dict, list, bool, number)
+            timestamp: Unix timestamp. If not provided, uses current time.
+            tags: Optional key-value tags
+
+        Example:
+            px.event("fault", "E-stop triggered")
+            px.event("state_change", {"from": "IDLE", "to": "RUNNING"})
+            px.event("sensor_error", {"sensor": "imu", "code": 42}, tags={"motor": "A"})
+        """
+        point = self._make_point(name, data, timestamp, tags, data_class="event")
+        return self._send_points([point])
+
     def send_batch(
         self,
         points: List[Tuple[str, FlexValue]],
@@ -283,8 +307,8 @@ class Plexus:
                 ("position", {"x": 1.0, "y": 2.0}),
             ])
         """
-        ts = timestamp if timestamp is not None else time.time()
-        data_points = [self._make_point(m, v, ts, tags) for m, v in points]
+        ts_ms = self._normalize_ts_ms(timestamp)
+        data_points = [self._make_point(m, v, ts_ms, tags) for m, v in points]
         return self._send_points(data_points)
 
     def _ensure_ws(self):
@@ -300,9 +324,13 @@ class Plexus:
             install_id=get_install_id(),
             agent_version=__version__,
             on_source_id_assigned=self._on_source_id_assigned,
+            on_clock_synced=self._on_clock_synced,
         )
         self._ws.start()
         return self._ws
+
+    def _on_clock_synced(self, offset_ms: int) -> None:
+        self._clock_offset_ms = offset_ms
 
     def _on_source_id_assigned(self, assigned: str) -> None:
         """Callback from WebSocketTransport when the gateway returns an
@@ -555,7 +583,7 @@ class Plexus:
                     "source_id": self.source_id,
                     "status": "started",
                     "tags": tags,
-                    "timestamp": time.time(),
+                    "timestamp": (int(time.time() * 1000) + self._clock_offset_ms) / 1000,
                 },
                 timeout=self.timeout,
             )
@@ -573,7 +601,7 @@ class Plexus:
                         "run_id": run_id,
                         "source_id": self.source_id,
                         "status": "ended",
-                        "timestamp": time.time(),
+                        "timestamp": (int(time.time() * 1000) + self._clock_offset_ms) / 1000,
                     },
                     timeout=self.timeout,
                 )
