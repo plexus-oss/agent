@@ -25,6 +25,7 @@ Runs the read loop on a background daemon thread so callers can stay sync.
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import os
@@ -158,6 +159,7 @@ class WebSocketTransport:
             target=self._run, name="plexus-ws", daemon=True
         )
         self._thread.start()
+        atexit.register(self.stop)
 
     def stop(self, timeout: float = 2.0) -> None:
         self._stop.set()
