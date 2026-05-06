@@ -41,7 +41,7 @@ def on_message(_client, _userdata, msg):
         px.send(name, data)
 
 
-client = mqtt.Client()
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
 client.on_message = on_message
 client.connect(broker)
 client.subscribe(topic)

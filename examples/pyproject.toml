@@ -1,0 +1,15 @@
+[project]
+name = "examples"
+version = "0.1.0"
+description = "Standalone example scripts for plexus-python"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "adafruit-circuitpython-bme280>=2.6.32",
+    "cantools>=41.3.1",
+    "paho-mqtt>=2.1.0",
+    "plexus-python>=0.4.6",
+    "psutil>=7.2.2",
+    "pymavlink>=2.4.49",
+    "python-can>=4.6.1",
+]
