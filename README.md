@@ -102,6 +102,24 @@ px.buffer_size()
 px.flush_buffer()
 ```
 
+## Timestamps and clock correction
+
+By default — `px.send("temp", 72.5)` with no `timestamp` argument — the SDK picks the time itself. Over WebSocket, it synchronizes with the gateway clock on every connection, so data lands at the right place on the timeline even if the device's system clock is wrong (no NTP on first boot, stale RTC, fresh OS image).
+
+```python
+px.send("temperature", 72.5)                # SDK picks time; gateway-synced over WS
+px.send("temperature", 72.5, timestamp=t)   # your timestamp, used as-is, no correction
+```
+
+**Pass an explicit timestamp when** you have a reliable external time source (GPS, trusted RTC, host NTP) or are replaying historical data with known timestamps.
+
+**Omit timestamp when** the device may have booted without NTP — which is the default on Raspberry Pi, Jetson, and most embedded Linux boards without a network connection at first boot.
+
+**Known limits:**
+- Clock sync refreshes on WebSocket (re)connect. A device with a drifting RTC that stays connected for many days accumulates uncorrected drift between reconnects.
+- HTTP-only transport (`transport="http"`) does not receive clock sync — timestamps default to the uncorrected device clock.
+- `send_batch()` shares one timestamp across the whole batch. For per-point timestamps, call `send()` in a loop.
+
 ## Transport
 
 By default the SDK connects over a **WebSocket** to `/ws/device` on the gateway — same wire protocol as the C SDK. This gives you:

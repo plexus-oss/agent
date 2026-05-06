@@ -98,7 +98,7 @@ x-api-key: plx_xxxxx
 | ------------ | ------ | -------- | ---------------------------------------------- |
 | `metric`     | string | Yes      | Metric name (e.g., `temperature`, `motor.rpm`) |
 | `value`      | any    | Yes      | See supported value types below                |
-| `timestamp`  | float  | No       | Unix timestamp (seconds). Defaults to now      |
+| `timestamp`  | float  | No       | Unix timestamp in seconds (or ms if ≥ 1e12). Omit to use device time. Over WebSocket, the Python SDK applies a server-synced clock correction when omitted — see [Clock correction](#clock-correction). |
 | `source_id`  | string | Yes      | Your source identifier                         |
 | `tags`       | object | No       | Key-value labels                               |
 | `session_id` | string | No       | Group data into sessions                       |
@@ -168,17 +168,21 @@ Devices authenticate using an API key. The `source_id` in the request is the dev
 // Server → Device
 {
   "type": "authenticated",
-  "source_id": "drone-01"
+  "source_id": "drone-01",
+  "server_time_ms": 1746100800000
 }
 
 // Server → Device (collision case)
 {
   "type": "authenticated",
-  "source_id": "drone-01_2"
+  "source_id": "drone-01_2",
+  "server_time_ms": 1746100800000
 }
 ```
 
 The SDK **adopts** whatever `source_id` the server returns and uses it for all subsequent frames, heartbeats, and reconnects. It also persists the assigned name locally so reconnects go straight to the claimed slot.
+
+`server_time_ms` is the gateway's current Unix time in milliseconds. The Python SDK uses it to compute a clock offset (`server_time - device_time`) that is applied to every SDK-generated timestamp for the lifetime of the connection. This corrects for devices that boot without NTP or have an unreliable RTC — a common condition on embedded Linux. See [Clock correction](#clock-correction) for details and limitations.
 
 `install_id` is a stable per-installation UUID, generated on the device's first run and saved to `~/.plexus/config.json`. It lets the server distinguish a rebooting device from a new device trying to claim an existing name. Legacy SDKs that omit `install_id` continue to work as before (the server passes the declared `source_id` through unchanged).
 
@@ -354,6 +358,9 @@ func main() {
 #include <WiFi.h>
 #include <HTTPClient.h>
 
+// Call configTime(0, 0, "pool.ntp.org") in setup() before sending.
+// time(nullptr) returns 0 until NTP sync completes — omit the timestamp
+// field entirely if you cannot guarantee NTP sync at send time.
 void sendToPlexus(const char* metric, float value) {
     HTTPClient http;
     http.begin("https://plexus-gateway.fly.dev/ingest");
@@ -363,7 +370,7 @@ void sendToPlexus(const char* metric, float value) {
     String payload = "{\"points\":[{";
     payload += "\"metric\":\"" + String(metric) + "\",";
     payload += "\"value\":" + String(value) + ",";
-    payload += "\"timestamp\":" + String(millis() / 1000.0) + ",";
+    payload += "\"timestamp\":" + String(time(nullptr)) + ",";
     payload += "\"source_id\":\"esp32-001\"";
     payload += "}]}";
 
@@ -469,10 +476,39 @@ class MySensor(BaseSensor):
 | 404    | Resource not found              |
 | 410    | Resource expired                |
 
+## Clock correction
+
+Embedded devices commonly boot with a wrong system clock — no hardware RTC, NTP unreachable on first boot, or a fresh OS image whose filesystem timestamp is months in the past. Without correction, all telemetry lands at the wrong place on the timeline.
+
+The Python SDK corrects for this automatically over WebSocket. On every connection the gateway returns `server_time_ms` in the `authenticated` frame. The SDK computes `offset = server_time - device_time` and adds it to every timestamp it generates. Data lands at the right time on the dashboard regardless of what the device clock says.
+
+**When the correction applies:**
+
+The offset is applied when `timestamp` is omitted (the SDK generates the time). If you pass an explicit `timestamp`, it is used as-is — the SDK cannot tell whether your value is a wall-clock time or a hardware-relative counter, so it leaves it alone.
+
+```python
+px.send("temperature", 72.5)                    # SDK picks time → correction applied
+px.send("temperature", 72.5, timestamp=t)        # your timestamp → used as-is, no correction
+```
+
+**When to pass an explicit timestamp:**
+- You have a reliable wall-clock source (GPS, trusted hardware RTC, host NTP)
+- You are replaying or backfilling historical data
+- Your sensor provides its own wall-clock timestamp
+
+**When to omit timestamp:**
+- The device may have booted without NTP (Raspberry Pi, Jetson, field robots without network on first boot)
+- You have no reliable external time source
+
+**Known limitations:**
+- The clock offset refreshes only on WebSocket reconnect. A device with a drifting RTC that stays connected for many days will accumulate uncorrected drift between reconnects proportional to the drift rate.
+- HTTP transport (`transport="http"`) does not receive clock sync — timestamps default to the device clock uncorrected.
+- `send_batch()` takes one shared `timestamp` for the whole batch, not per-point. For per-point timestamps, call `send()` in a loop.
+
 ## Best Practices
 
 - **Batch points** - Send up to 100 points per request for HTTP
-- **Use timestamps** - Always include accurate timestamps
+- **Omit timestamp when unsure** - The Python SDK applies server-synced clock correction when `timestamp` is omitted over WebSocket; only pass an explicit timestamp when you have a reliable wall-clock source
 - **Consistent source_id** - Use the same ID for each physical device/source
 - **Use tags** - Label data for filtering (e.g., `{"location": "lab"}`)
 - **Use sessions** - Group related data for easier analysis

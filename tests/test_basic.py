@@ -1,5 +1,7 @@
 """Basic tests for plexus-python."""
 
+import time
+
 from plexus import __version__
 from plexus.client import Plexus
 from plexus.config import DEFAULT_CONFIG
@@ -41,3 +43,19 @@ def test_make_point_with_tags():
     point = px._make_point("temperature", 72.5, tags={"sensor": "A1"})
 
     assert point["tags"] == {"sensor": "A1"}
+
+
+def test_normalize_ts_ms_applies_clock_offset():
+    px = Plexus(api_key="test", endpoint="http://localhost")
+    px._clock_offset_ms = 5000
+    before = int(time.time() * 1000)
+    ts = px._normalize_ts_ms(None)
+    after = int(time.time() * 1000)
+    assert before + 5000 <= ts <= after + 5000
+
+
+def test_normalize_ts_ms_ignores_offset_for_supplied_timestamp():
+    px = Plexus(api_key="test", endpoint="http://localhost")
+    px._clock_offset_ms = 5000
+    ts = px._normalize_ts_ms(1_700_000_000.0)
+    assert ts == 1_700_000_000_000
