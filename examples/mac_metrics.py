@@ -61,7 +61,7 @@ while True:
 
     # CPU spike event — fires once per interval when threshold is crossed
     if cpu >= CPU_SPIKE_THRESHOLD:
-        top = max(psutil.process_iter(["name", "cpu_percent"]), key=lambda p: p.info["cpu_percent"])
+        top = max(psutil.process_iter(["name", "cpu_percent"]), key=lambda p: p.info["cpu_percent"] or 0)
         px.event("cpu.spike", {
             "cpu_percent": cpu,
             "top_process": top.info["name"],
@@ -70,7 +70,7 @@ while True:
 
     # Memory pressure event
     if mem.percent >= MEM_PRESSURE_THRESHOLD:
-        top = max(psutil.process_iter(["name", "memory_percent"]), key=lambda p: p.info["memory_percent"])
+        top = max(psutil.process_iter(["name", "memory_percent"]), key=lambda p: p.info["memory_percent"] or 0)
         px.event("memory.pressure", {
             "memory_percent": mem.percent,
             "top_process": top.info["name"],
