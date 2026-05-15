@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.7] - 2026-05-14 - Video streaming API
+
+### Added
+
+- `Plexus.send_video_frame(frame, camera_id, quality, timestamp)` — high-level
+  API for streaming camera frames. Accepts a numpy array (e.g. from
+  `cv2.VideoCapture.read()`), handles JPEG encoding, base64, dimensions, and
+  auth wait internally. Requires `transport="ws"` and `opencv-python`.
+
+### Changed
+
+- Gateway WebSocket URL (`wss://plexus-gateway.fly.dev`) is now the SDK
+  default — no need to pass `ws_url` explicitly.
+- Removed the `[plexus]   endpoint: …` line from the connection printout.
+
+### Performance
+
+- Eliminated per-frame `buf.tobytes()` copy in `send_video_frame` by passing
+  the numpy buffer directly to `base64.b64encode` (buffer protocol).
+- `base64` imported at module level; `cv2` imported once on first call and
+  cached, removing repeated import overhead from the hot path.
+
 ## [0.4.5] - 2026-04-27 - Stderr status output (re-release of 0.4.4)
 
 Same code as 0.4.4 — the 0.4.4 publish workflow failed lint on a stray
