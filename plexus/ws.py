@@ -292,7 +292,6 @@ class WebSocketTransport:
             _say(f"✓ Reconnected as {self.source_id}")
         else:
             _say(f"✓ Connected to gateway as {self.source_id}")
-            _say(f"  endpoint: {self.ws_url}")
 
         # 3. Read loop with heartbeat pump
         ws.settimeout(1.0)

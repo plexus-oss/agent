@@ -33,6 +33,7 @@ Usage:
 Note: Requires authentication. Run 'plexus start' or set PLEXUS_API_KEY.
 """
 
+import base64
 import gzip
 import json
 import logging
@@ -134,6 +135,7 @@ class Plexus:
         self._run_id: Optional[str] = None
         self._session: Optional[requests.Session] = None
         self._store_frames: bool = False
+        self._cv2 = None
 
         if transport not in ("ws", "http"):
             raise ValueError(f"transport must be 'ws' or 'http', got {transport!r}")
@@ -341,6 +343,65 @@ class Plexus:
             set_source_id(assigned)
         except Exception as e:  # pragma: no cover - persistence failure is non-fatal
             logger.debug("failed to persist assigned source_id: %s", e)
+
+    def send_video_frame(
+        self,
+        frame,
+        camera_id: str = "camera:0",
+        quality: int = 85,
+        timestamp: Optional[float] = None,
+    ) -> bool:
+        """
+        Send a single video frame to Plexus (WebSocket transport only).
+
+        Args:
+            frame: A numpy array (H, W, C) as returned by cv2.VideoCapture.read()
+            camera_id: Logical camera identifier (e.g. "picam:0", "usb:1")
+            quality: JPEG compression quality, 1-100. Default 85.
+            timestamp: Unix timestamp. If not provided, uses current time.
+
+        Returns:
+            True if the frame was sent successfully.
+
+        Raises:
+            PlexusError: If transport is not 'ws', or if the send fails.
+            ImportError: If opencv-python is not installed.
+
+        Example:
+            cap = cv2.VideoCapture(0)
+            ret, frame = cap.read()
+            px.send_video_frame(frame, camera_id="picam:0")
+        """
+        if self.transport != "ws":
+            raise PlexusError("send_video_frame requires transport='ws'")
+
+        if self._cv2 is None:
+            try:
+                import cv2 as _cv2
+                self._cv2 = _cv2
+            except ImportError as e:
+                raise ImportError(
+                    "send_video_frame requires opencv-python. "
+                    "Install with: pip install opencv-python"
+                ) from e
+
+        height, width = frame.shape[:2]
+        _, buf = self._cv2.imencode(".jpg", frame, [self._cv2.IMWRITE_JPEG_QUALITY, quality])
+        b64 = base64.b64encode(buf).decode()
+
+        ws = self._ensure_ws()
+        if not ws.is_authenticated:
+            ws.wait_authenticated(timeout=min(self.timeout, 5.0))
+
+        return ws._send_frame({
+            "type": "video_frame",
+            "source_id": self.source_id,
+            "camera_id": camera_id,
+            "frame": b64,
+            "width": width,
+            "height": height,
+            "timestamp": self._normalize_ts_ms(timestamp),
+        })
 
     def on_command(
         self,
