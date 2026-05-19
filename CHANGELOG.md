@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.4.8] - 2026-05-19 - Video input broadening and wire safety
+
+### Added
+
+- `send_video_frame` now accepts raw bytes/bytearray: JPEG bytes are passed
+  through without re-encoding (zero CPU cost on hardware that outputs JPEG
+  natively); other formats (PNG, BMP, WebP) are decoded via Pillow and
+  re-encoded as JPEG. Install `plexus-python[video]` for Pillow support.
+- `stream_camera(url, camera_id, fps, quality)` — streams from any
+  FFmpeg-supported source (RTSP, video file, capture device). Requires FFmpeg
+  on `$PATH`. Returns a `threading.Event`; call `.set()` to stop.
+- `read_mjpeg_frames(pipe)` — public generator that parses raw MJPEG byte
+  streams (e.g. FFmpeg stdout) into individual JPEG frames by SOI/EOI markers.
+  Useful for custom FFmpeg pipelines before handing off to `send_video_frame`.
+- Optional `video` extras group: `pip install plexus-python[video]` installs
+  Pillow for non-JPEG input decoding and automatic oversized-frame downsampling.
+
+### Changed
+
+- Frames that would exceed the gateway's 1 MB wire limit are automatically
+  re-encoded at a proportionally lower quality. A one-time warning is printed
+  to stderr; subsequent frames are silently clamped.
+- `stream_camera` raises `PlexusError` synchronously (before spawning a thread)
+  when FFmpeg is not found, rather than silently dying in the background.
+
 ## [0.4.7] - 2026-05-14 - Video streaming API
 
 ### Added
