@@ -39,14 +39,15 @@ import json
 import logging
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from contextlib import contextmanager
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
-
-import requests
 
 from plexus.buffer import BufferBackend, MemoryBuffer, SqliteBuffer
 from plexus.config import (
@@ -60,6 +61,46 @@ from plexus.config import (
     set_source_id,
 )
 logger = logging.getLogger(__name__)
+
+
+class _Response:
+    __slots__ = ("status_code", "text")
+
+    def __init__(self, status_code: int, text: str):
+        self.status_code = status_code
+        self.text = text
+
+
+class _Session:
+    def __init__(self):
+        self.headers: Dict[str, str] = {}
+
+    def post(self, url: str, data: bytes = b"", headers: Optional[Dict[str, str]] = None, timeout: float = 10.0) -> "_Response":
+        req_headers = {**self.headers, **(headers or {})}
+        req = urllib.request.Request(url, data=data, headers=req_headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return _Response(resp.status, resp.read().decode("utf-8", errors="replace"))
+        except urllib.error.HTTPError as e:
+            return _Response(e.code, e.read().decode("utf-8", errors="replace"))
+        except urllib.error.URLError as e:
+            if isinstance(e.reason, socket.timeout):
+                raise _Timeout(str(e.reason))
+            raise _ConnError(str(e.reason))
+        except (TimeoutError, socket.timeout) as e:
+            raise _Timeout(str(e))
+
+    def close(self) -> None:
+        pass
+
+
+class _Timeout(OSError):
+    pass
+
+
+class _ConnError(OSError):
+    pass
+
 
 # Status messages to stderr so users running `python my_script.py` see what's
 # happening without having to configure logging. Set PLEXUS_QUIET=1 to disable.
@@ -166,7 +207,7 @@ class Plexus:
         self._max_buffer_size = max_buffer_size
 
         self._run_id: Optional[str] = None
-        self._session: Optional[requests.Session] = None
+        self._session: Optional[_Session] = None
         self._store_frames: bool = False
         self._cv2 = None
         self._pil_image = None  # lazy PIL.Image import
@@ -202,10 +243,9 @@ class Plexus:
         self._max_buffer_size = value
         self._buffer._max_size = value
 
-    def _get_session(self) -> requests.Session:
-        """Get or create a requests session for connection pooling."""
+    def _get_session(self) -> _Session:
         if self._session is None:
-            self._session = requests.Session()
+            self._session = _Session()
             if self.api_key:
                 self._session.headers["x-api-key"] = self.api_key
             self._session.headers["Content-Type"] = "application/json"
@@ -732,14 +772,14 @@ class Plexus:
                         f"API error: {response.status_code} - {response.text}"
                     )
 
-            except requests.exceptions.Timeout:
+            except _Timeout:
                 last_error = PlexusError(f"Request timed out after {self.timeout}s")
                 if attempt < self.retry_config.max_retries:
                     time.sleep(self.retry_config.get_delay(attempt))
                     continue
                 break
 
-            except requests.exceptions.ConnectionError as e:
+            except _ConnError as e:
                 last_error = PlexusError(f"Connection failed: {e}")
                 if attempt < self.retry_config.max_retries:
                     time.sleep(self.retry_config.get_delay(attempt))
@@ -839,13 +879,13 @@ class Plexus:
         try:
             self._get_session().post(
                 f"{self.endpoint}/api/runs",
-                json={
+                data=json.dumps({
                     "run_id": run_id,
                     "source_id": self.source_id,
                     "status": "started",
                     "tags": tags,
                     "timestamp": (int(time.time() * 1000) + self._clock_offset_ms) / 1000,
-                },
+                }).encode("utf-8"),
                 timeout=self.timeout,
             )
         except Exception as e:
@@ -858,12 +898,12 @@ class Plexus:
             try:
                 self._get_session().post(
                     f"{self.endpoint}/api/runs",
-                    json={
+                    data=json.dumps({
                         "run_id": run_id,
                         "source_id": self.source_id,
                         "status": "ended",
                         "timestamp": (int(time.time() * 1000) + self._clock_offset_ms) / 1000,
-                    },
+                    }).encode("utf-8"),
                     timeout=self.timeout,
                 )
             except Exception as e:
