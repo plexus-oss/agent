@@ -8,7 +8,7 @@ version = "0.4.9"
 description = "Thin Python SDK for Plexus — send telemetry in one line"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 authors = [
     { name = "Plexus", email = "hello@plexus.dev" }
 ]
@@ -19,7 +19,6 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -28,13 +27,13 @@ classifiers = [
     "Topic :: System :: Hardware",
 ]
 dependencies = [
-    "requests>=2.28.0",
+    "requests>=2.32.4",
     "websocket-client>=1.7",
 ]
 
 [project.optional-dependencies]
-video = ["Pillow>=9.0"]
-dev = ["pytest", "pytest-cov", "ruff", "websockets>=12"]
+video = ["Pillow>=11.2.1"]
+dev = ["pytest>=8.3.5", "pytest-cov", "ruff", "websockets>=12"]
 
 [project.scripts]
 plexus = "plexus.cli:main"

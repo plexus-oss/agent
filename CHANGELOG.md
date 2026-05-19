@@ -24,6 +24,10 @@
   to stderr; subsequent frames are silently clamped.
 - `stream_camera` raises `PlexusError` synchronously (before spawning a thread)
   when FFmpeg is not found, rather than silently dying in the background.
+- Minimum `requests` bumped to `>=2.32.4` (fixes CVE in `extract_zipped_paths`).
+- Minimum `Pillow` bumped to `>=11.2.1` (fixes OOB write, FITS decompression bomb,
+  font integer overflow, PDF parsing DoS).
+- Dropped Python 3.8 support (EOL October 2024); minimum is now Python 3.9.
 
 ## [0.4.7] - 2026-05-14 - Video streaming API
 
