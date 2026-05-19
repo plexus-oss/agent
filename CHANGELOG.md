@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.5.0] - 2026-05-19 - Security hardening, dep cleanup, Python 3.10+ only
+
+### Security
+
+- Removed `requests` (and its transitive deps `urllib3`, `idna`) entirely —
+  replaced with stdlib `urllib.request`. Closes 6 Dependabot alerts (#6, #9,
+  #10, #11, #12, #13, #19) by eliminating the vulnerability surface rather than
+  patching it.
+- Bumped `Pillow>=12.2.0` (fixes #14, #15, #16, #17, #18, #20 — OOB write,
+  FITS decompression bomb, font integer overflow, PDF parsing DoS, and related
+  CVEs).
+- Bumped `pytest>=9.0.3` in dev deps (fixes #7).
+
+### Changed
+
+- Dropped Python 3.8 and 3.9 support — both are past EOL and the patched
+  versions of Pillow and pytest all require `>=3.10`. `requires-python` is now
+  `>=3.10`.
+- CI matrix: removed 3.8/3.9 runners, added 3.13.
+
 ## [0.4.9] - 2026-05-19 - Video input broadening and wire safety
 
 ### Added
