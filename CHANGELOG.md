@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.4.8] - 2026-05-19 - Video input broadening and wire safety
+## [0.4.9] - 2026-05-19 - Video input broadening and wire safety
 
 ### Added
 
