@@ -3,9 +3,8 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-import requests
 
-from plexus.client import AuthenticationError, Plexus, PlexusError
+from plexus.client import AuthenticationError, Plexus, PlexusError, _ConnError, _Timeout
 from plexus.config import RetryConfig
 
 
@@ -70,8 +69,8 @@ class TestRetryBehavior:
 
             # Timeout twice, then succeed
             mock_session.return_value.post.side_effect = [
-                requests.exceptions.Timeout(),
-                requests.exceptions.Timeout(),
+                _Timeout(),
+                _Timeout(),
                 mock_response,
             ]
 
@@ -87,8 +86,8 @@ class TestRetryBehavior:
 
             # Connection error twice, then succeed
             mock_session.return_value.post.side_effect = [
-                requests.exceptions.ConnectionError("Connection refused"),
-                requests.exceptions.ConnectionError("Connection refused"),
+                _ConnError("Connection refused"),
+                _ConnError("Connection refused"),
                 mock_response,
             ]
 
@@ -219,7 +218,7 @@ class TestBuffering:
     def test_buffer_on_all_retries_failed(self, client):
         """Should buffer points when all retries fail."""
         with patch.object(client, "_get_session") as mock_session:
-            mock_session.return_value.post.side_effect = requests.exceptions.Timeout()
+            mock_session.return_value.post.side_effect = _Timeout()
 
             with pytest.raises(PlexusError):
                 client.send("temp", 72.5)
@@ -231,7 +230,7 @@ class TestBuffering:
         """Buffered points should be included in the next send attempt."""
         with patch.object(client, "_get_session") as mock_session:
             # First send fails
-            mock_session.return_value.post.side_effect = requests.exceptions.Timeout()
+            mock_session.return_value.post.side_effect = _Timeout()
 
             with pytest.raises(PlexusError):
                 client.send("temp", 72.5)
@@ -275,7 +274,7 @@ class TestBuffering:
         client.max_buffer_size = 5
 
         with patch.object(client, "_get_session") as mock_session:
-            mock_session.return_value.post.side_effect = requests.exceptions.Timeout()
+            mock_session.return_value.post.side_effect = _Timeout()
 
             # Send 10 points, each will fail and buffer
             for i in range(10):
@@ -294,7 +293,7 @@ class TestBuffering:
         """flush_buffer should send buffered points."""
         with patch.object(client, "_get_session") as mock_session:
             # First send fails, buffering the point
-            mock_session.return_value.post.side_effect = requests.exceptions.Timeout()
+            mock_session.return_value.post.side_effect = _Timeout()
 
             with pytest.raises(PlexusError):
                 client.send("temp", 72.5)
@@ -340,7 +339,7 @@ class TestThreadSafety:
         # attrs and is not thread-safe under contention. We just need every
         # call to fail so the buffer takes the write.
         mock_session = MagicMock()
-        mock_session.return_value.post.side_effect = requests.exceptions.Timeout()
+        mock_session.return_value.post.side_effect = _Timeout()
 
         with patch.object(client, "_get_session", mock_session):
             threads = [
