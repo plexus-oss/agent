@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.5.1] - 2026-05-19 - Binary video frames + non-blocking send
+
+### Performance
+
+- `send_video_frame()` now sends a compact binary WebSocket frame instead of
+  JSON+base64. The binary header encodes source_id, camera_id, width, height,
+  and timestamp_ms; the JPEG payload follows raw. Eliminates the 33% base64
+  wire overhead, reducing per-frame bandwidth by ~25% and raising the
+  sustainable FPS ceiling from ~15–20 fps to ~20–25 fps at 1280×720 quality 85.
+- Gateway decodes the binary header and re-encodes as JSON+base64 before
+  relaying to browsers — no changes required in the frontend, data_api, or any
+  other consumer.
+
+### Reliability
+
+- `send_video_frame()` is now non-blocking. Frames are placed into a
+  `queue.Queue(maxsize=2)` drained by a dedicated `plexus-video` daemon thread.
+  When the queue is full (sender backlogged) frames are dropped rather than
+  blocking the capture pipeline, preventing deadlocks at any FPS.
+- `stop()` / `close()` now exits cleanly within 0.5 s regardless of in-flight
+  sends. Previously a slow or hung WebSocket write could stall shutdown
+  indefinitely.
+
+### Changed
+
+- Removed `import base64` from `client.py` (no longer needed on the send path).
+- `send_video_frame()` calls `ws.send_video_frame_async()` instead of the
+  internal `ws._send_frame()`.
+
+### Wire protocol
+
+- Gateway handles both binary frames (SDK ≥ 0.5.1) and legacy JSON text frames
+  transparently — older SDKs continue to work unchanged.
+
 ## [0.5.0] - 2026-05-19 - Security hardening, dep cleanup, Python 3.10+ only
 
 ### Security
