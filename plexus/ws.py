@@ -29,7 +29,9 @@ import atexit
 import json
 import logging
 import os
+import queue
 import random
+import struct
 import sys
 import threading
 import time
@@ -134,6 +136,8 @@ class WebSocketTransport:
         self._thread: Optional[threading.Thread] = None
         self._backoff_attempt = 0
         self._clock_offset_ms: int = 0
+        self._video_queue: "queue.Queue[bytes]" = queue.Queue(maxsize=2)
+        self._video_thread: Optional[threading.Thread] = None
 
     # ------------------------------------------------------------------ public
 
@@ -159,6 +163,10 @@ class WebSocketTransport:
             target=self._run, name="plexus-ws", daemon=True
         )
         self._thread.start()
+        self._video_thread = threading.Thread(
+            target=self._video_sender_loop, name="plexus-video", daemon=True
+        )
+        self._video_thread.start()
         atexit.register(self.stop)
 
     def stop(self, timeout: float = 2.0) -> None:
@@ -172,6 +180,8 @@ class WebSocketTransport:
                 pass
         if self._thread:
             self._thread.join(timeout=timeout)
+        if self._video_thread:
+            self._video_thread.join(timeout=timeout)
 
     def wait_authenticated(self, timeout: float = AUTH_TIMEOUT_S) -> bool:
         return self._authenticated.wait(timeout=timeout)
@@ -193,6 +203,28 @@ class WebSocketTransport:
             return False
         frame = {"type": "telemetry", "points": points}
         return self._send_frame(frame)
+
+    def send_video_frame_async(
+        self,
+        source_id: str,
+        camera_id: str,
+        jpeg_bytes: bytes,
+        width: int,
+        height: int,
+        timestamp_ms: int,
+    ) -> bool:
+        """Encode and enqueue a binary video frame. Non-blocking — drops the
+        frame if the queue is full rather than blocking the caller."""
+        if not self._authenticated.is_set():
+            return False
+        payload = _encode_binary_video_frame(
+            source_id, camera_id, jpeg_bytes, width, height, timestamp_ms
+        )
+        try:
+            self._video_queue.put_nowait(payload)
+            return True
+        except queue.Full:
+            return False
 
     # ------------------------------------------------------------------ thread
 
@@ -227,6 +259,28 @@ class WebSocketTransport:
             first_attempt = False
             if self._stop.wait(timeout=delay):
                 break
+
+    def _video_sender_loop(self) -> None:
+        """Drain _video_queue and send binary WebSocket frames.
+
+        Runs on a dedicated thread so slow sends never block the caller.
+        Drops frames during reconnect rather than queuing stale video.
+        """
+        while not self._stop.is_set():
+            try:
+                payload = self._video_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if not self._authenticated.is_set():
+                continue  # drop during auth / reconnect
+            with self._ws_lock:
+                ws = self._ws
+            if ws is None:
+                continue
+            try:
+                ws.send_binary(payload)
+            except Exception as e:
+                logger.debug("plexus video send failed: %s", e)
 
     def _connect_and_serve(self) -> None:
         ws = websocket.create_connection(self.ws_url, timeout=AUTH_TIMEOUT_S)
@@ -398,6 +452,37 @@ class WebSocketTransport:
 
 
 # --------------------------------------------------------------------- helpers
+
+
+def _encode_binary_video_frame(
+    source_id: str,
+    camera_id: str,
+    jpeg_bytes: bytes,
+    width: int,
+    height: int,
+    timestamp_ms: int,
+) -> bytes:
+    """Pack a video frame into the binary wire format.
+
+    Wire layout:
+        [0x01]          1 byte   version
+        [src_len]       1 byte   source_id byte length (capped at 255)
+        [source_id]     N bytes
+        [cam_len]       1 byte   camera_id byte length (capped at 255)
+        [camera_id]     M bytes
+        [width]         4 bytes  uint32 big-endian
+        [height]        4 bytes  uint32 big-endian
+        [timestamp_ms]  8 bytes  int64  big-endian
+        [jpeg_bytes]    rest
+    """
+    src = source_id.encode("utf-8")[:255]
+    cam = camera_id.encode("utf-8")[:255]
+    header = (
+        bytes([0x01, len(src)]) + src
+        + bytes([len(cam)]) + cam
+        + struct.pack(">IIq", width, height, timestamp_ms)
+    )
+    return header + jpeg_bytes
 
 
 def _ensure_device_path(url: str) -> str:

@@ -35,33 +35,107 @@ The name must match `^[a-z0-9][a-z0-9_-]{1,62}$`. `setup.sh` refuses to run with
 
 In normal code, you usually just pass `source_id=...` explicitly to `Plexus(...)` and never have to think about it.
 
-## Usage
+## Core methods
+
+### `send(metric, value)` — stream a reading
+
+The main method. Call it every time you have a new sensor reading.
 
 ```python
-from plexus import Plexus
-
 px = Plexus(source_id="rig-01")   # reads PLEXUS_API_KEY from env
 
-# Numbers
 px.send("engine.rpm", 3450)
-px.send("coolant.temperature", 82.3, tags={"unit": "C"})
+px.send("coolant.temp", 82.3)
+```
 
-# Strings, bools, objects, arrays — all JSON-serializable
-px.send("vehicle.state", "RUNNING")
-px.send("motor.enabled", True)
-px.send("position", {"x": 1.5, "y": 2.3, "z": 0.8})
+`metric` is a dot-namespaced string (`"motor.rpm"`, `"gps.fix_quality"`). `value` accepts any JSON-serializable type:
 
-# Batch
+| Type | Example | When to use |
+|------|---------|-------------|
+| `float` / `int` | `72.5`, `3450` | Sensor readings, counters |
+| `str` | `"RUNNING"`, `"E_STALL"` | State machines, error codes |
+| `bool` | `True` | Binary flags |
+| `dict` | `{"x": 1.5, "y": 2.3}` | Vectors, structured readings |
+| `list` | `[0.5, 1.2, -0.3]` | Waveforms, joint angles |
+
+Optional arguments:
+- `tags={"motor_id": "A1"}` — key-value labels for filtering in the dashboard
+- `timestamp=t` — explicit Unix timestamp in seconds; omit to let the SDK pick (see [Timestamps](#timestamps-and-clock-correction))
+
+### `send_batch(points)` — send multiple readings at once
+
+Use this when you sample several sensors together and want them to share a timestamp and land in one network call.
+
+```python
 px.send_batch([
-    ("temperature", 72.5),
-    ("pressure", 1013.25),
+    ("temperature", 22.4),
+    ("humidity",    58.1),
+    ("pressure",    1013.2),
 ])
+```
 
-# Named run for grouping related data
+`points` is a list of `(metric, value)` tuples. All points share the same timestamp (now, unless you pass `timestamp=t`). For independent timestamps per point, call `send()` in a loop instead.
+
+### `event(name, data)` — record a discrete occurrence
+
+Use `event()` for things that *happen* rather than things you *measure continuously*. Faults, state transitions, operator actions, log entries — anything you'd put on a timeline as a marker rather than plot as a graph.
+
+```python
+px.event("fault",        "E-stop triggered")
+px.event("state_change", {"from": "IDLE", "to": "RUNNING"})
+px.event("sensor_error", {"sensor": "imu", "code": 42}, tags={"motor": "A"})
+```
+
+The platform displays events as markers overlaid on your telemetry charts, not as time-series lines.
+
+### `run(run_id)` — group data into a named recording
+
+```python
 with px.run("thermal-cycle-001"):
     while running:
         px.send("temperature", read_temp())
 ```
+
+All `send()` calls inside the context are tagged with `run_id`, making it easy to isolate and replay that slice of data in the dashboard.
+
+## Video streaming
+
+Two methods depending on whether you control the capture loop or just have a URL.
+
+### `send_video_frame(frame, camera_id)` — send frames you capture yourself
+
+Use this when your code owns the capture loop — a `picamera2` callback, an OpenCV `VideoCapture` loop, or an FFmpeg pipe you manage. Pass each frame and the SDK ships it to Plexus over WebSocket.
+
+```python
+import cv2
+
+cap = cv2.VideoCapture(0)
+while True:
+    ok, frame = cap.read()
+    if ok:
+        px.send_video_frame(frame, camera_id="front")
+```
+
+Accepted frame types:
+- **numpy ndarray** (H × W × C) — from OpenCV or picamera2; requires `opencv-python`
+- **JPEG bytes** — passed through as-is, zero re-encode overhead
+- **Other image bytes** (PNG, BMP, WebP) — decoded and re-encoded as JPEG via Pillow; requires `pip install plexus-python[video]`
+
+`camera_id` identifies which camera the frame came from. Use distinct IDs when streaming from multiple cameras simultaneously (`"front"`, `"rear"`, `"cam:0"`).
+
+### `stream_camera(url, camera_id)` — stream from an RTSP URL or file
+
+Use this when you have an RTSP stream or video file and don't want to manage the capture loop yourself. The SDK runs FFmpeg internally and handles the rest. Requires FFmpeg on `$PATH`.
+
+```python
+stop = px.stream_camera("rtsp://192.168.1.100/stream", camera_id="front")
+# ... do other work ...
+stop.set()  # stop streaming
+```
+
+Returns a `threading.Event` — call `.set()` to stop. Runs in a background thread so it doesn't block your main loop.
+
+**Which to use:** if you're piping from `rpicam-vid`, `picamera2`, or your own capture process, use `send_video_frame()`. If you have an RTSP URL or file path, use `stream_camera()`.
 
 ## Bring Your Own Protocol
 

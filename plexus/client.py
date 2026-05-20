@@ -33,7 +33,6 @@ Usage:
 Note: Requires authentication. Run 'plexus start' or set PLEXUS_API_KEY.
 """
 
-import base64
 import gzip
 import json
 import logging
@@ -564,21 +563,15 @@ class Plexus:
 
         jpeg_bytes, width, height = self._encode_frame(frame, quality)
         jpeg_bytes = self._fit_to_wire(jpeg_bytes, quality)
-        b64 = base64.b64encode(jpeg_bytes).decode()
 
         ws = self._ensure_ws()
         if not ws.is_authenticated:
             ws.wait_authenticated(timeout=min(self.timeout, 5.0))
 
-        return ws._send_frame({
-            "type": "video_frame",
-            "source_id": self.source_id,
-            "camera_id": camera_id,
-            "frame": b64,
-            "width": width,
-            "height": height,
-            "timestamp": self._normalize_ts_ms(timestamp),
-        })
+        return ws.send_video_frame_async(
+            self.source_id, camera_id, jpeg_bytes, width, height,
+            self._normalize_ts_ms(timestamp),
+        )
 
     def stream_camera(
         self,
