@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.5.2] - 2026-05-21 - DX hardening for hardware engineers
+
+### Fixed
+
+- Error messages now reference `plexus init` instead of the non-existent `plexus start`.
+- `close()` now attempts to flush any buffered points before tearing down the transport,
+  preventing silent data loss on graceful shutdown.
+- `persistent_buffer` default changed from `False` to `True` — store-and-forward is now
+  on by default, matching the `~/.plexus/config.json` default and the right choice for
+  field hardware. Pass `persistent_buffer=False` to opt out (e.g. in test fixtures).
+
+### Added
+
+- `send_batch()` now accepts 3-tuples `(metric, value, timestamp)` alongside the existing
+  2-tuple form. Per-point timestamps let sensors on different interrupt timers share a
+  single batch call. 2-tuples continue to use the shared `timestamp` argument.
+- `on_command()` now warns immediately via stderr if called after the WebSocket has already
+  authenticated, making the "register before first send()" ordering requirement visible
+  rather than silently broken.
+- `source_id` is validated against `^[a-z0-9][a-z0-9_-]{1,62}$` at construction time.
+  Invalid names now raise `ValueError` with a clear message instead of failing obscurely
+  at the gateway.
+
+### Changed
+
+- `_say()` / `_QUIET` consolidated into a new internal `plexus/_log.py` module.
+  Previously duplicated verbatim between `client.py` and `ws.py`.
+
 ## [0.5.1] - 2026-05-19 - Binary video frames + non-blocking send
 
 ### Performance
