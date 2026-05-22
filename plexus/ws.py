@@ -32,7 +32,6 @@ import os
 import queue
 import random
 import struct
-import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -48,22 +47,7 @@ except ImportError as e:  # pragma: no cover - import-time failure is obvious
 
 logger = logging.getLogger(__name__)
 
-# By default, print connection status to stderr so users running
-# `python my_script.py` can see what's happening without having to
-# configure the logging module. Set PLEXUS_QUIET=1 to disable.
-_QUIET = os.environ.get("PLEXUS_QUIET", "").lower() in ("1", "true", "yes")
-
-
-def _say(line: str) -> None:
-    """Single-line status message to stderr. Skipped if PLEXUS_QUIET=1."""
-    if _QUIET:
-        return
-    try:
-        sys.stderr.write(f"[plexus] {line}\n")
-        sys.stderr.flush()
-    except Exception:
-        # Stderr blew up — don't take the whole client down with it.
-        pass
+from plexus._log import _say
 
 AUTH_TIMEOUT_S = 10.0
 HEARTBEAT_INTERVAL_S = 30.0

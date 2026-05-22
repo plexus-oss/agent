@@ -10,5 +10,5 @@ Plexus — thin Python SDK for sending telemetry to the Plexus gateway.
 from plexus.client import Plexus, read_mjpeg_frames
 from plexus.ws import WebSocketTransport
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 __all__ = ["Plexus", "WebSocketTransport", "read_mjpeg_frames"]
