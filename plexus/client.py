@@ -36,7 +36,6 @@ Note: Requires authentication. Run 'plexus init' or set PLEXUS_API_KEY.
 import gzip
 import json
 import logging
-import os
 import re
 import shutil
 import socket
@@ -48,6 +47,7 @@ import urllib.request
 from contextlib import contextmanager
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
+from plexus._log import _say
 from plexus.buffer import BufferBackend, MemoryBuffer, SqliteBuffer
 from plexus.config import (
     RetryConfig,
@@ -59,6 +59,7 @@ from plexus.config import (
     get_source_id,
     set_source_id,
 )
+
 logger = logging.getLogger(__name__)
 
 
@@ -100,8 +101,6 @@ class _Timeout(OSError):
 class _ConnError(OSError):
     pass
 
-
-from plexus._log import _say
 
 # Flexible value type - supports any JSON-serializable value
 FlexValue = Union[int, float, str, bool, Dict[str, Any], List[Any]]

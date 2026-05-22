@@ -65,12 +65,9 @@ def test_send_batch_shared_timestamp():
     """All 2-tuple points share the same timestamp when none is supplied per-point."""
     px = Plexus(api_key="test", endpoint="http://localhost", persistent_buffer=False)
     t = 1_700_000_000.0
-    points = px._make_point  # just verify via send_batch internals
 
     # Build points directly to inspect timestamps
     default_ts_ms = px._normalize_ts_ms(t)
-    from plexus.client import Plexus as _Plexus
-
     batch_points = [("temp", 22.0), ("humidity", 55.0)]
     data = []
     for p in batch_points:

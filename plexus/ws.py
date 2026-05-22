@@ -28,7 +28,6 @@ from __future__ import annotations
 import atexit
 import json
 import logging
-import os
 import queue
 import random
 import struct
@@ -45,9 +44,9 @@ except ImportError as e:  # pragma: no cover - import-time failure is obvious
         "Install with: pip install websocket-client"
     ) from e
 
-logger = logging.getLogger(__name__)
-
 from plexus._log import _say
+
+logger = logging.getLogger(__name__)
 
 AUTH_TIMEOUT_S = 10.0
 HEARTBEAT_INTERVAL_S = 30.0
