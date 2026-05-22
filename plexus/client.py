@@ -30,17 +30,17 @@ Usage:
             px.send("temperature", read_temp())
             time.sleep(0.01)
 
-Note: Requires authentication. Run 'plexus start' or set PLEXUS_API_KEY.
+Note: Requires authentication. Run 'plexus init' or set PLEXUS_API_KEY.
 """
 
 import gzip
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 import subprocess
-import sys
 import threading
 import time
 import urllib.error
@@ -101,19 +101,7 @@ class _ConnError(OSError):
     pass
 
 
-# Status messages to stderr so users running `python my_script.py` see what's
-# happening without having to configure logging. Set PLEXUS_QUIET=1 to disable.
-_QUIET = os.environ.get("PLEXUS_QUIET", "").lower() in ("1", "true", "yes")
-
-
-def _say(line: str) -> None:
-    if _QUIET:
-        return
-    try:
-        sys.stderr.write(f"[plexus] {line}\n")
-        sys.stderr.flush()
-    except Exception:
-        pass
+from plexus._log import _say
 
 # Flexible value type - supports any JSON-serializable value
 FlexValue = Union[int, float, str, bool, Dict[str, Any], List[Any]]
@@ -161,6 +149,18 @@ class AuthenticationError(PlexusError):
     pass
 
 
+_SOURCE_ID_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{1,62}$')
+
+
+def _validate_source_id(source_id: str) -> None:
+    if not _SOURCE_ID_RE.match(source_id):
+        raise ValueError(
+            f"Invalid source_id {source_id!r}. "
+            "Must match ^[a-z0-9][a-z0-9_-]{1,62}$ "
+            "(lowercase letters, digits, hyphens, underscores; start with letter or digit)."
+        )
+
+
 class Plexus:
     """
     Client for sending sensor data to Plexus.
@@ -186,7 +186,7 @@ class Plexus:
         timeout: float = 10.0,
         retry_config: Optional[RetryConfig] = None,
         max_buffer_size: int = 10000,
-        persistent_buffer: bool = False,
+        persistent_buffer: bool = True,
         buffer_path: Optional[str] = None,
         transport: str = "ws",
         ws_url: Optional[str] = None,
@@ -201,6 +201,7 @@ class Plexus:
         self.endpoint = (endpoint or get_endpoint()).rstrip("/")
         self.gateway_url = get_gateway_url()
         self.source_id = source_id or get_source_id()
+        _validate_source_id(self.source_id)
         self.timeout = timeout
         self.retry_config = retry_config or RetryConfig()
         self._max_buffer_size = max_buffer_size
@@ -360,7 +361,7 @@ class Plexus:
 
     def send_batch(
         self,
-        points: List[Tuple[str, FlexValue]],
+        points: List[Union[Tuple[str, FlexValue], Tuple[str, FlexValue, float]]],
         timestamp: Optional[float] = None,
         tags: Optional[Dict[str, str]] = None,
     ) -> bool:
@@ -368,8 +369,11 @@ class Plexus:
         Send multiple metrics at once.
 
         Args:
-            points: List of (metric, value) tuples. Values can be any FlexValue type.
-            timestamp: Shared timestamp for all points. If not provided, uses current time.
+            points: List of (metric, value) or (metric, value, timestamp) tuples.
+                    Values can be any FlexValue type. Per-point timestamps override
+                    the shared timestamp argument.
+            timestamp: Shared timestamp for points that don't supply their own.
+                       If not provided, uses current time.
             tags: Shared tags for all points
 
         Returns:
@@ -382,9 +386,23 @@ class Plexus:
                 ("robot.state", "RUNNING"),
                 ("position", {"x": 1.0, "y": 2.0}),
             ])
+
+            # Per-point timestamps (e.g. sensors on different interrupt timers):
+            px.send_batch([
+                ("imu.accel_x", 0.12, t_imu),
+                ("pressure",    1013.2, t_baro),
+                ("temperature", 22.4),   # uses shared timestamp
+            ])
         """
-        ts_ms = self._normalize_ts_ms(timestamp)
-        data_points = [self._make_point(m, v, ts_ms, tags) for m, v in points]
+        default_ts_ms = self._normalize_ts_ms(timestamp)
+        data_points = []
+        for p in points:
+            if len(p) == 3:
+                m, v, t = p
+                data_points.append(self._make_point(m, v, self._normalize_ts_ms(t), tags))
+            else:
+                m, v = p
+                data_points.append(self._make_point(m, v, default_ts_ms, tags))
         return self._send_points(data_points)
 
     def _ensure_ws(self):
@@ -656,6 +674,12 @@ class Plexus:
         if self.transport != "ws":
             raise PlexusError("on_command requires transport='ws'")
         ws = self._ensure_ws()
+        if ws.is_authenticated:
+            _say(
+                f"⚠ on_command('{name}') called after connection is already authenticated — "
+                "command will not be advertised to the dashboard until next reconnect. "
+                "Call on_command() before the first send()."
+            )
         ws.register_command(name, handler, description=description, params=params)
 
     def _send_points(self, points: List[Dict[str, Any]]) -> bool:
@@ -673,7 +697,7 @@ class Plexus:
         """
         if not self.api_key:
             raise AuthenticationError(
-                "No API key configured. Run 'plexus start' or set PLEXUS_API_KEY"
+                "No API key configured. Run 'plexus init' or set PLEXUS_API_KEY"
             )
 
         # Include any previously buffered points
@@ -905,7 +929,12 @@ class Plexus:
             self._store_frames = False
 
     def close(self):
-        """Close the client and release resources."""
+        """Close the client, flush any buffered points, and release resources."""
+        if self.buffer_size() > 0:
+            try:
+                self.flush_buffer()
+            except Exception as e:
+                logger.debug("flush on close failed: %s", e)
         if self._ws is not None:
             self._ws.stop()
             self._ws = None

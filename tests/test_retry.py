@@ -59,6 +59,7 @@ class TestRetryBehavior:
             api_key="test_key",
             endpoint="http://localhost:9999",
             retry_config=RetryConfig(max_retries=2, base_delay=0.01, jitter=False),
+            persistent_buffer=False,
         )
 
     def test_retry_on_timeout(self, client):
@@ -213,6 +214,7 @@ class TestBuffering:
             endpoint="http://localhost:9999",
             retry_config=RetryConfig(max_retries=1, base_delay=0.01, jitter=False),
             max_buffer_size=100,
+            persistent_buffer=False,
         )
 
     def test_buffer_on_all_retries_failed(self, client):
