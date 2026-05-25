@@ -23,8 +23,8 @@ Instead, email **support@plexus.company** with:
 
 | Version | Supported |
 | ------- | --------- |
-| 0.9.x   | Yes       |
-| < 0.9   | No        |
+| 0.5.x   | Yes       |
+| < 0.5   | No        |
 
 ## Disclosure Policy
 

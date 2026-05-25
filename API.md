@@ -145,7 +145,7 @@ For real-time UI-controlled streaming, devices connect via WebSocket.
 
 ### Connection Flow
 
-1. Device connects to PartyKit server
+1. Device connects to the gateway
 2. Device authenticates with API key
 3. Device reports available sensors
 4. Dashboard controls streaming via messages
