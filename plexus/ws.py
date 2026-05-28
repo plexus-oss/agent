@@ -209,6 +209,13 @@ class WebSocketTransport:
         except queue.Full:
             return False
 
+    def send_json_video_frame(self, msg: Dict[str, Any]) -> bool:
+        """Send a JSON video_frame message. Used for frames that carry extra
+        metadata (e.g. thermal cameras) that the binary format cannot express."""
+        if not self._authenticated.is_set():
+            return False
+        return self._send_frame(msg)
+
     # ------------------------------------------------------------------ thread
 
     def _run(self) -> None:
