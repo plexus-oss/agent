@@ -483,8 +483,8 @@ class Plexus:
             except ImportError as e:
                 if required:
                     raise ImportError(
-                        "This frame type requires opencv-python. "
-                        "Install with: pip install opencv-python"
+                        "This frame type requires opencv-python-headless. "
+                        "Install with: pip install plexus-python[video]"
                     ) from e
         return self._cv2
 
@@ -611,7 +611,7 @@ class Plexus:
 
         Raises:
             PlexusError: If transport is not 'ws'.
-            ImportError: If opencv-python is not installed.
+            ImportError: If opencv-python-headless is not installed.
         """
         if self.transport != "ws":
             raise PlexusError("send_thermal_frame requires transport='ws'")
@@ -620,8 +620,8 @@ class Plexus:
             from plexus.cameras.thermal import build_thermal_frame
         except ImportError as e:
             raise ImportError(
-                "send_thermal_frame requires opencv-python. "
-                "Install with: pip install opencv-python"
+                "send_thermal_frame requires opencv-python-headless. "
+                "Install with: pip install plexus-python[video]"
             ) from e
 
         frame = build_thermal_frame(temps, timestamp_ms=self._normalize_ts_ms(timestamp))
