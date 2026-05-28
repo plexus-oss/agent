@@ -590,6 +590,51 @@ class Plexus:
             self._normalize_ts_ms(timestamp),
         )
 
+    def send_thermal_frame(
+        self,
+        temps,
+        camera_id: str = "thermal:0",
+        quality: int = 85,
+        timestamp: Optional[float] = None,
+    ) -> bool:
+        """Send a thermal camera frame to Plexus (WebSocket transport only).
+
+        Args:
+            temps: 2-D float32 numpy array of temperatures in Celsius,
+                   shape (height, width). Obtained from ThermalCamera.read_frame().
+            camera_id: Logical camera identifier.
+            quality: JPEG quality for the colorized image, 1-100.
+            timestamp: Unix timestamp in seconds. Defaults to current time.
+
+        Returns:
+            True if the frame was sent successfully.
+
+        Raises:
+            PlexusError: If transport is not 'ws'.
+            ImportError: If opencv-python is not installed.
+        """
+        if self.transport != "ws":
+            raise PlexusError("send_thermal_frame requires transport='ws'")
+
+        try:
+            from plexus.cameras.thermal import build_thermal_frame
+        except ImportError as e:
+            raise ImportError(
+                "send_thermal_frame requires opencv-python. "
+                "Install with: pip install opencv-python"
+            ) from e
+
+        frame = build_thermal_frame(temps, timestamp_ms=self._normalize_ts_ms(timestamp))
+        msg = frame.to_message(
+            camera_id=camera_id, source_id=self.source_id, quality=quality
+        )
+
+        ws = self._ensure_ws()
+        if not ws.is_authenticated:
+            ws.wait_authenticated(timeout=min(self.timeout, 5.0))
+
+        return ws.send_json_video_frame(msg)
+
     def stream_camera(
         self,
         url: str,
