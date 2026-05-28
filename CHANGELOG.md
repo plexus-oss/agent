@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.2] - 2026-05-28 - Dependency fix
+
+### Fixed
+
+- Replaced `opencv-python` with `opencv-python-headless` in the `[video]` extra —
+  headless is the correct choice for embedded/server use and avoids pulling in Qt/GUI
+  dependencies that don't belong on Raspberry Pi or headless Linux.
+- Merged the `[thermal]` extra into `[video]`. OpenCV is needed for all video frame
+  encoding, not just thermal cameras. Install with `pip install plexus-python[video]`.
+- Synced `plexus.__version__` with `pyproject.toml` (both now `0.6.2`).
+
 ## [0.6.1] - 2026-05-28 - Thermal camera streaming
 
 ### Added
