@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.6.0] - 2026-05-28 - Thermal camera streaming
+## [0.6.1] - 2026-05-28 - Thermal camera streaming
 
 ### Added
 
