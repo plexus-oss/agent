@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.0] - 2026-05-28 - Thermal camera streaming
+
+### Added
+
+- `plexus.cameras.thermal` module with hardware-agnostic drivers for I2C sensors
+  (MLX90640, MLX90641) and USB cameras (Y16 pixel format). All drivers return a
+  unified `ThermalFrame` containing a colorized JPEG plus temperature metadata
+  (min, max, mean °C).
+- `ThermalSource.open()` auto-detects connected hardware; pass `"sim"` for a
+  simulated source with no physical device required.
+- `client.send_thermal_frame()` sends thermal frames over the existing WebSocket
+  connection. Small sensors (≤4096 pixels, e.g. 32×24 MLX90640) include the full
+  temperature array inline; larger USB sensors omit it to keep frame sizes manageable.
+- `examples/thermal_camera.py` — end-to-end example for streaming a thermal camera.
+
 ## [0.5.2] - 2026-05-21 - DX hardening for hardware engineers
 
 ### Fixed
