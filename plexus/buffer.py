@@ -41,6 +41,10 @@ class BufferBackend(ABC):
     def size(self) -> int:
         """Return current number of buffered points."""
 
+    @abstractmethod
+    def resize(self, max_size: int) -> None:
+        """Update the maximum buffer capacity."""
+
     def drain(self, batch_size: int = 5000) -> Tuple[List[Dict[str, Any]], int]:
         """Remove and return the oldest batch_size points atomically.
 
@@ -96,6 +100,10 @@ class MemoryBuffer(BufferBackend):
     def size(self) -> int:
         with self._lock:
             return len(self._buffer)
+
+    def resize(self, max_size: int) -> None:
+        with self._lock:
+            self._max_size = max_size
 
     def drain(self, batch_size: int = 5000) -> Tuple[List[Dict[str, Any]], int]:
         with self._lock:
@@ -184,6 +192,10 @@ class SqliteBuffer(BufferBackend):
         with self._lock:
             cursor = self._conn.execute("SELECT COUNT(*) FROM points")
             return cursor.fetchone()[0]
+
+    def resize(self, max_size: int) -> None:
+        with self._lock:
+            self._max_size = max_size
 
     def drain(self, batch_size: int = 5000) -> Tuple[List[Dict[str, Any]], int]:
         """Remove and return the oldest batch_size points atomically.

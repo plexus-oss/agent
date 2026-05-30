@@ -8,8 +8,9 @@ ThermalFrame containing a colorized JPEG image plus temperature metadata.
 Usage:
     from plexus.cameras.thermal import ThermalSource
 
-    cam = ThermalSource.open()          # auto-detect
     cam = ThermalSource.open("sim")     # simulated, no hardware
+    cam = ThermalSource.open("mlx90640")  # I2C MLX90640
+    cam = ThermalSource.open("usb")     # USB thermal at index 0
 
     while True:
         px.send_thermal_frame(cam.read_frame(), camera_id="thermal")
@@ -325,19 +326,33 @@ class MLX90641Camera(ThermalCamera):
 
 
 class ThermalSource:
-    """Factory that opens the first available thermal camera.
+    """Factory for opening a thermal camera by type.
+
+    A camera type must be specified explicitly — auto-detection is not supported
+    because USB thermal cameras and regular webcams are indistinguishable at the
+    OS level without knowing what you're looking for.
+
+    Args:
+        hint: Which camera to open. One of:
+            "sim"      — simulated 32×24 camera, no hardware required
+            "mlx90640" — MLX90640 32×24 I2C sensor (Raspberry Pi, 3.3V)
+            "mlx90641" — MLX90641 16×12 I2C sensor (Raspberry Pi, 3.3V)
+            "usb"      — USB thermal camera at device index 0
+            <int>      — USB thermal camera at a specific device index
+
+    Raises:
+        ValueError: If hint is None or unrecognised.
+        NoCameraFound: If the specified device cannot be opened.
 
     Examples:
-        ThermalSource.open()             # auto-detect
-        ThermalSource.open("sim")        # simulated
-        ThermalSource.open("mlx90640")   # force I2C MLX90640
-        ThermalSource.open("mlx90641")   # force I2C MLX90641
-        ThermalSource.open("usb")        # USB thermal at index 0
-        ThermalSource.open(2)            # USB thermal at index 2
+        cam = ThermalSource.open("sim")        # no hardware
+        cam = ThermalSource.open("mlx90640")   # I2C MLX90640
+        cam = ThermalSource.open("usb")        # USB at index 0
+        cam = ThermalSource.open(2)            # USB at index 2
     """
 
     @staticmethod
-    def open(hint: str | int | None = None) -> ThermalCamera:
+    def open(hint: str | int) -> ThermalCamera:
         if hint == "sim":
             return SimulatedThermalCamera()
         if hint == "mlx90640":
@@ -346,43 +361,7 @@ class ThermalSource:
             return MLX90641Camera()
         if hint == "usb" or isinstance(hint, int):
             return USBThermalCamera(0 if hint == "usb" else hint)
-        return ThermalSource._autodetect()
-
-    @staticmethod
-    def _autodetect() -> ThermalCamera:
-        cam = ThermalSource._try_i2c()
-        if cam:
-            return cam
-        cam = ThermalSource._try_usb()
-        if cam:
-            return cam
-        raise NoCameraFound(
-            "No thermal camera detected. Use ThermalSource.open('sim') to run without hardware."
+        raise ValueError(
+            f"Unknown camera hint {hint!r}. "
+            "Valid options: 'sim', 'mlx90640', 'mlx90641', 'usb', or a device index (int)."
         )
-
-    @staticmethod
-    def _try_i2c() -> ThermalCamera | None:
-        try:
-            import board
-            import busio
-
-            i2c = busio.I2C(board.SCL, board.SDA)
-            i2c.try_lock()
-            addrs = i2c.scan()
-            i2c.unlock()
-            if 0x33 in addrs:
-                return MLX90640Camera()
-            if 0x60 in addrs:
-                return MLX90641Camera()
-        except Exception:
-            pass
-        return None
-
-    @staticmethod
-    def _try_usb() -> ThermalCamera | None:
-        for idx in range(10):
-            try:
-                return USBThermalCamera(idx)
-            except NoCameraFound:
-                continue
-        return None

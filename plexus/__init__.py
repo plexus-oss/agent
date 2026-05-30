@@ -7,8 +7,8 @@ Plexus — thin Python SDK for sending telemetry to the Plexus gateway.
     px.send("temperature", 72.5)
 """
 
-from plexus.client import Plexus, read_mjpeg_frames
-from plexus.ws import WebSocketTransport
+from plexus.client import Plexus, PlexusError, AuthenticationError, read_mjpeg_frames
+from plexus.config import RetryConfig
 
-__version__ = "0.6.2"
-__all__ = ["Plexus", "WebSocketTransport", "read_mjpeg_frames"]
+__version__ = "0.7.0"
+__all__ = ["Plexus", "PlexusError", "AuthenticationError", "RetryConfig", "read_mjpeg_frames"]

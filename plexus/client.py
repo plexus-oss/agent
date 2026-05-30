@@ -187,7 +187,6 @@ class Plexus:
         max_buffer_size: int = 10000,
         persistent_buffer: bool = True,
         buffer_path: Optional[str] = None,
-        transport: str = "ws",
         ws_url: Optional[str] = None,
     ):
         self.api_key = api_key or get_api_key()
@@ -212,9 +211,6 @@ class Plexus:
         self._pil_image = None  # lazy PIL.Image import
         self._fit_warned: bool = False
 
-        if transport not in ("ws", "http"):
-            raise ValueError(f"transport must be 'ws' or 'http', got {transport!r}")
-        self.transport = transport
         self._ws_url = (ws_url or get_gateway_ws_url())
         self._ws = None  # lazily constructed in _ensure_ws()
         self._clock_offset_ms: int = 0
@@ -222,10 +218,14 @@ class Plexus:
         # Pluggable buffer backend for failed sends
         if persistent_buffer:
             self._buffer: BufferBackend = SqliteBuffer(
-                path=buffer_path, max_size=max_buffer_size
+                path=buffer_path, max_size=max_buffer_size,
+                on_overflow=self._on_buffer_overflow,
             )
         else:
-            self._buffer: BufferBackend = MemoryBuffer(max_size=max_buffer_size)
+            self._buffer: BufferBackend = MemoryBuffer(
+                max_size=max_buffer_size,
+                on_overflow=self._on_buffer_overflow,
+            )
 
         # State that drives the [plexus] stderr status line.
         self._announced_first_send = False
@@ -240,7 +240,7 @@ class Plexus:
     @max_buffer_size.setter
     def max_buffer_size(self, value):
         self._max_buffer_size = value
-        self._buffer._max_size = value
+        self._buffer.resize(value)
 
     def _get_session(self) -> _Session:
         if self._session is None:
@@ -422,6 +422,9 @@ class Plexus:
         self._ws.start()
         return self._ws
 
+    def _on_buffer_overflow(self, dropped: int) -> None:
+        _say(f"⚠ buffer full, dropped {dropped} oldest points (gateway unreachable?)")
+
     def _on_clock_synced(self, offset_ms: int) -> None:
         self._clock_offset_ms = offset_ms
 
@@ -575,9 +578,6 @@ class Plexus:
             ValueError: If frame type is not supported.
             ImportError: If a required optional dependency is missing.
         """
-        if self.transport != "ws":
-            raise PlexusError("send_video_frame requires transport='ws'")
-
         jpeg_bytes, width, height = self._encode_frame(frame, quality)
         jpeg_bytes = self._fit_to_wire(jpeg_bytes, quality)
 
@@ -613,9 +613,6 @@ class Plexus:
             PlexusError: If transport is not 'ws'.
             ImportError: If opencv-python-headless is not installed.
         """
-        if self.transport != "ws":
-            raise PlexusError("send_thermal_frame requires transport='ws'")
-
         try:
             from plexus.cameras.thermal import build_thermal_frame
         except ImportError as e:
@@ -663,8 +660,6 @@ class Plexus:
             time.sleep(60)
             stop.set()
         """
-        if self.transport != "ws":
-            raise PlexusError("stream_camera requires transport='ws'")
         if shutil.which("ffmpeg") is None:
             raise PlexusError(
                 "FFmpeg not found. Install it: https://ffmpeg.org/download.html"
@@ -715,24 +710,21 @@ class Plexus:
         Must be called before the first send() so the command is advertised
         in the auth frame.
         """
-        if self.transport != "ws":
-            raise PlexusError("on_command requires transport='ws'")
         ws = self._ensure_ws()
         if ws.is_authenticated:
-            _say(
-                f"⚠ on_command('{name}') called after connection is already authenticated — "
+            logger.warning(
+                "on_command('%s') called after connection is already authenticated — "
                 "command will not be advertised to the dashboard until next reconnect. "
-                "Call on_command() before the first send()."
+                "Call on_command() before the first send().",
+                name,
             )
         ws.register_command(name, handler, description=description, params=params)
 
     def _send_points(self, points: List[Dict[str, Any]]) -> bool:
         """Send data points to the gateway with retry and buffering.
 
-        Path:
-        - transport='ws': try the WebSocket first; if not yet authenticated or
-          the socket fails, fall through to the HTTP path so points still land.
-        - transport='http': always POST /ingest with retries.
+        Tries WebSocket first; if not yet authenticated or the socket fails,
+        falls through to HTTP POST so points still land.
 
         Retry behavior (HTTP path):
         - Retries on: Timeout, ConnectionError, HTTP 429, HTTP 5xx
@@ -748,22 +740,21 @@ class Plexus:
         all_points = self._get_buffered_points() + points
 
         # Preferred path: WebSocket.
-        if self.transport == "ws":
-            ws = self._ensure_ws()
-            # Brief wait on first call so startup races don't dump every point
-            # into the HTTP fallback path.
-            if not ws.is_authenticated:
-                ws.wait_authenticated(timeout=min(self.timeout, 5.0))
-            if ws.send_points(all_points):
-                self._clear_buffer()
-                self._note_send(len(all_points), via="ws")
-                return True
-            # Socket unavailable → fall through to HTTP.
-            if not self._announced_http_fallback:
-                _say(
-                    f"⚠ WebSocket unavailable, falling back to POST {self.gateway_url}/ingest"
-                )
-                self._announced_http_fallback = True
+        ws = self._ensure_ws()
+        # Brief wait on first call so startup races don't dump every point
+        # into the HTTP fallback path.
+        if not ws.is_authenticated:
+            ws.wait_authenticated(timeout=min(self.timeout, 5.0))
+        if ws.send_points(all_points):
+            self._clear_buffer()
+            self._note_send(len(all_points), via="ws")
+            return True
+        # Socket unavailable → fall through to HTTP.
+        if not self._announced_http_fallback:
+            _say(
+                f"⚠ WebSocket unavailable, falling back to POST {self.gateway_url}/ingest"
+            )
+            self._announced_http_fallback = True
 
         url = f"{self.gateway_url}/ingest"
         last_error: Optional[Exception] = None

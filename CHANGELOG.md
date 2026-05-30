@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.7.0] - 2026-05-29 - SDK hardening
+
+### Fixed
+
+- Buffer overflow now surfaces on stderr (`⚠ buffer full, dropped N oldest points`) instead
+  of going silently to `logging.warning`. Both `MemoryBuffer` and `SqliteBuffer` are covered.
+- `on_command()` late-registration warning now goes through `logging.warning()` so it is not
+  suppressed by `PLEXUS_QUIET=1`.
+- `PLEXUS_QUIET` env var is now read at call time rather than import time — setting it after
+  module load now takes effect.
+- `max_buffer_size` setter no longer directly mutates `_buffer._max_size`; routes through a
+  new `resize()` method on `BufferBackend`.
+
+### Changed
+
+- `PlexusError`, `AuthenticationError`, and `RetryConfig` are now exported from the top-level
+  `plexus` package. `from plexus import PlexusError` now works as expected.
+- `WebSocketTransport` and `read_mjpeg_frames` removed from `__all__` — both remain importable
+  via their source modules but are no longer part of the top-level public API.
+
+### Breaking
+
+- `Plexus.__init__` no longer accepts a `transport` parameter. WebSocket with automatic HTTP
+  fallback is the only send path.
+- `ThermalSource.open()` now requires an explicit hint (`"sim"`, `"mlx90640"`, `"mlx90641"`,
+  `"usb"`, or a device index). Auto-detection has been removed — it could not reliably
+  distinguish USB thermal cameras from regular webcams.
+
 ## [0.6.2] - 2026-05-28 - Dependency fix
 
 ### Fixed
